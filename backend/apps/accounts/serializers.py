@@ -1,0 +1,69 @@
+import zoneinfo
+
+from django.contrib.auth.password_validation import validate_password
+from django.core import exceptions as django_exceptions
+from rest_framework import serializers
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+
+from apps.accounts.models import User
+from apps.accounts.services.registration import register_customer
+
+
+class UserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ["id", "email", "full_name", "role", "timezone"]
+        read_only_fields = ["id", "email", "role"]
+
+
+class RegisterSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(write_only=True)
+
+    class Meta:
+        model = User
+        fields = ["id", "email", "full_name", "password", "timezone", "role"]
+        read_only_fields = ["id", "role"]
+
+    def validate_password(self, value: str) -> str:
+        # Build an unsaved User so UserAttributeSimilarityValidator can reject
+        # passwords that are too similar to the submitted email/full_name —
+        # without a user instance it silently skips that check entirely.
+        temp_user = User(
+            email=self.initial_data.get("email", ""),
+            full_name=self.initial_data.get("full_name", ""),
+        )
+        try:
+            validate_password(value, user=temp_user)
+        except django_exceptions.ValidationError as exc:
+            raise serializers.ValidationError(list(exc.messages)) from exc
+        return value
+
+    def validate_timezone(self, value: str) -> str:
+        if value not in zoneinfo.available_timezones():
+            raise serializers.ValidationError("Not a valid IANA timezone.")
+        return value
+
+    def validate_email(self, value: str) -> str:
+        value = User.objects.normalize_email(value).lower()
+        if User.objects.filter(email=value).exists():
+            raise serializers.ValidationError("A user with this email already exists.")
+        return value
+
+    def create(self, validated_data: dict) -> User:
+        return register_customer(
+            email=validated_data["email"],
+            password=validated_data["password"],
+            full_name=validated_data["full_name"],
+            timezone=validated_data.get("timezone", "UTC"),
+        )
+
+
+class EmailTokenObtainPairSerializer(TokenObtainPairSerializer):
+    def validate(self, attrs: dict) -> dict:
+        data = super().validate(attrs)
+        data["user"] = UserSerializer(self.user).data
+        return data
+
+
+class LogoutSerializer(serializers.Serializer):
+    refresh = serializers.CharField()
