@@ -39,3 +39,6 @@ Thumbs.db
 
 # Docker
 *.pid
+
+# Claude Code local tooling
+.claude/

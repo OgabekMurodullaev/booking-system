@@ -24,4 +24,9 @@ urlpatterns = [
         scheduling_views.TimeOffDetailView.as_view(),
         name="provider-time-off-detail",
     ),
+    path(
+        "availability/",
+        scheduling_views.AvailabilityView.as_view(),
+        name="availability",
+    ),
 ]
