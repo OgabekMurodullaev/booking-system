@@ -83,6 +83,13 @@ CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = "UTC"
 
+CELERY_BEAT_SCHEDULE = {
+    "expire-stale-holds": {
+        "task": "apps.bookings.tasks.expire_stale_holds_task",
+        "schedule": 60.0,
+    },
+}
+
 AUTH_PASSWORD_VALIDATORS = [
     {
         "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator",
