@@ -173,3 +173,51 @@ the actual acceptance criterion — the count doesn't grow with range/provider c
 hard-coding a magic number that would need updating every time an unrelated query is added
 elsewhere in the request cycle (e.g. auth middleware), which would make the test brittle for the
 wrong reason.
+
+## Section 5 — Booking flow, state machine, idempotency
+
+**What AI generated:** `apps/bookings/services/validation.py`: four pre-insert checks
+(`not_on_grid`, `outside_booking_window`, `outside_working_hours`, `provider_on_time_off`), reusing
+`_local_to_utc` from Section 4. `apps/bookings/services/booking.py`: `STATE_MACHINE` (a
+`dict[(from,to), TransitionRule]` with per-edge actor and extra-rule checks) covering all four
+edges from CLAUDE.md §6; `transition_booking` (`select_for_update` lock, state-machine lookup,
+`is_late_cancellation` flagging, `BookingStatusLog` write, `transaction.on_commit` notification);
+`submit_booking` (its own lock+log, since "submit without auto-confirm" isn't a status-changing
+edge in the spec's table); `create_hold` (idempotency-key replay lookup; four validators;
+auto-assign via `get_available_slots`'s returned `provider_ids` ordered by active-bookings-today
+then id; per-candidate insert inside a nested `transaction.atomic()` savepoint; `IntegrityError`
+constraint-name dispatch via `exc.__cause__.diag.constraint_name`, empirically verified against
+the real DB); `expire_stale_holds` (iterates due holds through `transition_booking` individually,
+so the "no transition may bypass transition_booking" rule holds even for the beat sweep).
+Celery: `apps/bookings/tasks.py` + a plain `CELERY_BEAT_SCHEDULE` dict (60s) — no
+`django-celery-beat` dependency added. `apps/notifications/services.py`: five no-op stubs for
+Section 7. Six endpoints under `/api/v1/bookings/` (list/create, detail, submit, confirm, cancel,
+complete), role-scoped via `get_queryset()` (customer/provider/admin) so out-of-scope ids 404
+rather than 403. 54 new tests across 8 files, including three real-thread concurrency tests
+(`threading.Barrier` + `connections.close_all()`, matching Section 2's established pattern):
+10 customers racing one slot → exactly 1 success; auto-assign with 3 providers and 5 concurrent
+requests → exactly 3 successes on 3 different providers; 5 concurrent requests with the same
+`Idempotency-Key` → exactly 1 booking.
+
+**What I changed / rejected:** The concurrency suite caught two real bugs during this session,
+both fixed before considering the section done: (1) when a concurrent idempotency-key replay and
+a provider/customer-overlap constraint were violated by the same insert, Postgres only reports one
+constraint name, and the original code only checked for a replay when *that specific* constraint
+fired — a losing thread got a raw 409 instead of the correct 200 replay. Fixed by checking for an
+existing `(customer, idempotency_key)` match on *any* `IntegrityError` first, before interpreting
+which constraint fired. (2) Ten threads racing an insert into the same exclusion-constrained range
+intermittently deadlocked at the Postgres level (SQLSTATE `40P01`, `OperationalError`, not
+`IntegrityError`) — uncaught, this surfaced as a raw 500 instead of a clean 409. Fixed by catching
+`OperationalError` alongside `IntegrityError` in the retry loop and treating a confirmed deadlock
+(`exc.__cause__.sqlstate == "40P01"`) the same as a lost conflict; any other `OperationalError` is
+re-raised rather than silently swallowed.
+
+**Why:** Both bugs were only found because the concurrency tests use real threads against real
+Postgres rather than mocks (CLAUDE.md's own testing rule) — a mocked test would have exercised the
+happy path of the retry loop and never hit either race. The deadlock in particular only reproduced
+on some runs (a genuinely flaky failure — passed, then failed with 500s, then passed again across
+three consecutive manual runs before the fix), which is exactly the "trust but verify" case for
+concurrency-critical code: re-running a passing suite once is not enough evidence it's race-free.
+After the fix, the three-test concurrency suite was run 3 times in a row (9 total passes, 0
+failures) before considering it solid enough to hand off to Section 6's dedicated 20-run
+stress-testing pass.
