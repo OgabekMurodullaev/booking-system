@@ -21,6 +21,7 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "django.contrib.postgres",
     "rest_framework",
     "rest_framework_simplejwt.token_blacklist",
     "django_filters",
@@ -108,6 +109,11 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 AUTH_USER_MODEL = "accounts.User"
+
+# W045: RawSQL()-based CheckConstraints (e.g. the "multiple of 5" duration check) are
+# intentionally DB-only — enforced at the database level (architecture rule: DB is the
+# last line of defence), not re-validated by Django's full_clean().
+SILENCED_SYSTEM_CHECKS = ["models.W045"]
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [

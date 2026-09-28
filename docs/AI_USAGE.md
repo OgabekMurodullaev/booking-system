@@ -83,3 +83,48 @@ tracing exactly what `validate_password(value)` without `user=` does in Django's
 than assuming the default validator list "just works" — worth catching before Section 6 explicitly
 audits concurrency and edge cases, since this one was cheap to fix immediately instead of carrying
 it forward as debt.
+
+## Section 3 — Core models, DB constraints, admin
+
+**What AI generated:** All remaining domain models: `catalog.Business/Service/Provider`,
+`scheduling.WorkingHours/TimeOff`, `bookings.Booking/BookingStatusLog`, plus `accounts.User.business`.
+DB invariants per CLAUDE.md §5: `Service` duration (5-480, step-of-5 via a `RawSQL` check since
+Django has no `%`-remainder lookup) and buffer (0-120) check constraints; `WorkingHours`/`TimeOff`
+start-before-end checks; `Booking`'s two `ExclusionConstraint`s (provider/`blocked_range` and
+customer/`time_range` overlap, both GiST via `BtreeGistExtension()` as the first migration
+operation), the idempotency-key `UniqueConstraint`, and the `pending⇔expires_at` check; `(provider,
+status)`/`(customer, created_at)` indexes. Added a DB check constraint requiring `business` for
+`role in (provider, admin)` (superusers exempted — they're a site-admin concept, not a
+business-scoped role). Admin-facing CRUD: `services/`, `providers/` (creates the `User` + `Provider`
+together via `apps.catalog.services.providers.create_provider`, validating assigned services belong
+to the same business), `providers/<id>/working-hours/` (public GET, admin-or-self replace-all PUT),
+`providers/<id>/time-off/` (full CRUD, admin-or-self only) — all via `apps/catalog/permissions.py`'s
+`IsBusinessAdminOrOwnProvider`. Soft-delete on `Service`/`Provider` (`is_active=False`, row kept).
+84 tests across `catalog`/`scheduling`/`bookings`, plus a shared `apps/conftest.py` (business,
+admin, provider, customer fixtures + an `auth_client()` helper) to cut duplication across the three
+apps' test suites. Key decisions: WorkingHours overlap enforced in a service function
+(`validate_no_overlap`) + tests rather than a DB exclusion constraint, since Postgres has no
+built-in range type for bare `time` and the invariant is only ever broken by a single admin/provider
+action, never a concurrent race (unlike `Booking`, which stays DB-enforced); public `services/`/
+`providers/` listings and detail views are unscoped across businesses for *active* rows (public
+data), with cross-business isolation applying to inactive rows and all write operations;
+`User.business`'s `on_delete` set to `PROTECT` (not `SET_NULL`) after a manual test showed
+`SET_NULL` lets deleting a `Business` silently orphan its staff into an invalid constraint state;
+`CheckConstraint.check` renamed to `.condition` project-wide to clear a Django 5.1
+deprecation warning ahead of Django 6.
+
+**What I changed / rejected:** No changes on review — the three flagged decisions (active
+services/providers publicly visible across businesses while inactive rows and writes stay
+isolated; `working-hours/` GET public but `time-off/` admin-or-self only; `User.business`
+`on_delete=PROTECT`) were accepted as-is. The `on_delete=PROTECT` fix, the
+`CheckConstraint.check`→`.condition` rename, and the Section 2 `test_permissions.py` regression
+fix were already caught and corrected during implementation (via manual ORM testing and the full
+test run), not separate changes requested afterward.
+
+**Why:** Active services/providers being cross-business-visible matches how public data should
+behave (same as an anonymous visitor sees) — isolation is about the admin's own management
+surface, not about hiding public listings. The working-hours/time-off asymmetry follows the
+spec's own wording (working hours are storefront-like info; time off can carry a private reason).
+`PROTECT` was chosen over `SET_NULL` specifically because testing surfaced that `SET_NULL` lets a
+`Business` delete silently orphan its own staff into a constraint-violating state — `PROTECT`
+forces that to be handled explicitly instead of failing implicitly.
