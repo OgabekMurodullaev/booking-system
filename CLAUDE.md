@@ -167,8 +167,9 @@ cd frontend && npm run dev | npm run build | npm run typecheck | npm run gen:api
 - Start every section in **plan mode**: show the plan (files to create/change, key decisions) and wait for approval.
 - Work only on the current section's scope. Do not refactor unrelated code.
 - Run tests + lint before declaring a section done. Never mark done with failing tests.
-- **Never commit.** At the end, output: summary, decisions + trade-offs, anything uncertain, and a proposed
-  Conventional Commit message (or several, if the section should be split into multiple commits).
+- **Ask before pushing.** At the end, output: summary, decisions + trade-offs, anything uncertain, and a proposed
+  Conventional Commit message (or several, if the section should be split into multiple commits). Then ask for
+  explicit permission before committing and pushing — never push silently.
 - Never commit secrets. Config comes from environment variables (`django-environ`); keep `.env.example` updated.
 - If you are unsure about a business rule, ask instead of guessing.
 - Code, comments, docs and commit messages in English.
