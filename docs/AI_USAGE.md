@@ -128,3 +128,48 @@ spec's own wording (working hours are storefront-like info; time off can carry a
 `PROTECT` was chosen over `SET_NULL` specifically because testing surfaced that `SET_NULL` lets a
 `Business` delete silently orphan its own staff into a constraint-violating state — `PROTECT`
 forces that to be handled explicitly instead of failing implicitly.
+
+## Section 4 — Availability engine
+
+**What AI generated:** `apps/scheduling/services/intervals.py`: pure `merge_intervals`/
+`subtract_intervals` (half-open `[start, end)` tuples, zero Django/DB imports). `apps/scheduling/
+services/availability.py`: `Slot` dataclass; `_local_to_utc` (DST-safe local-wall-clock→UTC
+conversion via `zoneinfo`, detecting spring-forward gaps by round-tripping the conversion and
+comparing, using `fold` for fall-back ambiguity); `_grid_starts` (15-min local-time-of-day grid
+within a working-hours interval); `_group_slots_by_time` (the spec's "merge across providers" —
+deliberately named/kept separate from `merge_intervals`, since it groups already-computed slots by
+identical start/end rather than doing interval algebra); `get_available_slots(service, date_from,
+date_to, provider, now)` — 4 fixed DB queries total regardless of day-range or provider count
+(candidate providers, `WorkingHours`, `TimeOff` in the UTC window, active bookings via
+`Q(status=confirmed) | Q(status=pending, expires_at__gt=now)` pushed into the DB filter so an
+"expired pending" — status still literally `pending` since no expiry sweep exists until
+Section 5/6 — correctly stops blocking); `find_alternatives(service, around, provider, limit, now)`
+— forward-only, windowed, reuses `get_available_slots`. Endpoint `GET /api/v1/availability/`
+(`AllowAny`): `AvailabilityQuerySerializer` (date/range shape only), service/provider existence+
+active resolution done in the view (matching `ServiceDetailView`'s precedent), response grouped by
+local business-timezone date including empty dates. 43 new tests: `test_intervals.py` (pure,
+16 cases), `test_availability_service.py` (13 cases incl. two `Europe/Berlin` DST-transition tests
+that self-verify via round-tripping through `_local_to_utc` rather than hand-computed magic
+numbers), `test_availability_api.py` (10 cases incl. a `CaptureQueriesContext`-based test proving
+the query count is identical for a 1-day and a 14-day/2-vs-3-provider request), `test_find_
+alternatives.py` (4 cases). Key decisions: DST gap → drop the interval for that date rather than
+clamp; DST fold → always `fold=0` (earlier occurrence); `now` is a required/optional parameter
+threaded through every function, never `timezone.now()` inside the deterministic core (only the
+view and `find_alternatives`' outer default call it, exactly once each).
+
+**What I changed / rejected:** No changes on review — the three flagged decisions (DST gap-drop
+and fold=0 policy; the unpinned "grouped by date" response schema; the query-count test asserting
+"identical count, ≤10" rather than an exact fixed number) were accepted as-is.
+
+**Why:** The DST policy is a judgment call with no acceptance criterion dictating the alternative,
+and the target region (Central Asia, per the business's default `Asia/Tashkent` timezone) doesn't
+observe DST at all — this only matters if the system is later used by a business in a DST-observing
+timezone, at which point dropping ambiguous/nonexistent boundary times is the safer default over
+silently clamping. The response schema was left as proposed since nothing downstream (Section 9's
+frontend) exists yet to validate it against — it can still be adjusted then without churn elsewhere,
+since only this endpoint produces the shape. The query-count test's looser assertion ("same count
+for 1 day vs 14 days, same count for 2 vs 3 providers, bounded by 10") was kept because it proves
+the actual acceptance criterion — the count doesn't grow with range/provider count — without
+hard-coding a magic number that would need updating every time an unrelated query is added
+elsewhere in the request cycle (e.g. auth middleware), which would make the test brittle for the
+wrong reason.
