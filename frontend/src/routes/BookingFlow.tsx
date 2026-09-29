@@ -9,6 +9,7 @@ import { ApiError, unwrap } from '@/api/errors'
 import type { components } from '@/api/schema'
 import { useAvailability } from '@/hooks/useAvailability'
 import { useProviders, useService } from '@/hooks/useServices'
+import { generateIdempotencyKey } from '@/lib/idempotency'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -164,7 +165,7 @@ export function BookingFlow() {
       const booking = await unwrap(
         apiClient.POST('/api/v1/bookings/', {
           body: { service: serviceIdNum, provider, start: slot.start },
-          headers: { 'Idempotency-Key': crypto.randomUUID() },
+          headers: { 'Idempotency-Key': generateIdempotencyKey() },
         }),
       )
       setHold(booking)
