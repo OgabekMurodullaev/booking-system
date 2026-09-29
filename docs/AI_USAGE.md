@@ -389,3 +389,75 @@ code review rather than a live run, since forcing a real 401 needs either a 15-m
 access token to expire or a temporary settings change neither of which seemed worth the time
 against a stress-tested, single-flight-guarded implementation — flagged here rather than silently
 assumed correct.
+
+## Section 9 — Frontend: customer booking flow
+
+**What AI generated:** A real drf-spectacular bug found while planning this section, fixed before
+writing any frontend code: `POST /api/v1/bookings/` documented its 201 response as the
+*create-input* shape (`{service, provider, start}`) instead of the actual `BookingDetailSerializer`
+response the view returns, because `extend_schema` decorating `BookingListCreateView.create()`
+directly was silently ignored by drf-spectacular for this specific generic-view mixin action —
+switching to `@extend_schema_view(post=extend_schema(...))` (keying by the dispatched HTTP handler
+name rather than the DRF mixin action name) fixed it; empirically verified via a debug
+`operation_id` marker before settling on the real fix. A second small backend addition:
+`would_be_late_cancellation` (`apps/bookings/serializers.py`), a computed field mirroring
+`transition_booking`'s own late-cancellation check, so the frontend can warn *before* a customer
+confirms a cancellation rather than only reporting it after the fact — no `/businesses/` endpoint
+exists to expose `cancellation_window_hours` directly, and duplicating that timezone-sensitive
+calculation in JS would have been a second, divergeable copy of business logic. Frontend: a
+provider selector that derives its options from the union of `provider_ids` across one unfiltered
+14-day availability fetch (no `?service=`-filtered providers endpoint exists — confirmed by reading
+the live schema, not assumed), so switching providers is a pure client-side re-filter of already-
+fetched data, never a second network round-trip; a 14-day date strip and a slot grid grouped
+morning/afternoon/evening in the business's own timezone with a live "Asia/Tashkent time" label;
+hold creation with a fresh `Idempotency-Key` per slot click and a derived (not effect-synced)
+10-minute countdown — `secondsLeft`/`isHoldExpired` are computed each render from `hold.expires_at`
+and a ticking `nowTick` state, not stored as their own state kept in sync via `setState`-in-effect,
+per `eslint-plugin-react-hooks`'s newer `set-state-in-effect` rule, which caught this as a genuine
+smell during implementation, not just a lint nag; inline 409 handling (`slot_unavailable` →
+`error.details.alternatives` rendered as one-click retry buttons + an automatic availability
+refetch). My Bookings: three tabs bucketed client-side from one unfiltered list fetch (the
+`status` filter only accepts one value, and "Upcoming" needs `pending`+`confirmed` together), a
+detail `Sheet` with the status-log timeline, a `Cancel` `AlertDialog` that shows the late-
+cancellation warning from the new backend field, and an authenticated blob-download for
+`calendar.ics` (the endpoint needs the JWT, so a plain `<a href>` can't be used). New shadcn
+primitives: `badge`, `tabs`, `sheet`, `select`, `skeleton`, `alert-dialog` — hit the same Windows
+path-alias bug as Section 8 (files landed in a literal `./@/` folder instead of `src/components/
+ui/`), fixed the same way (moved by hand, no config change needed since it's a CLI-environment
+quirk, not a project misconfiguration).
+
+**What I changed / rejected:** No changes on review — the plan's decisions (deriving the provider
+selector from availability instead of a nonexistent filter endpoint, the `would_be_late_cancellation`
+addition, the morning/12/afternoon/18/evening boundary choice, per-click idempotency keys, client-
+side tab bucketing) were accepted as-is. One real implementation fix made during typecheck/lint,
+not a design change: the first draft tracked `selectedDate`/`secondsLeft`/`holdExpired` as separate
+`useState` values kept in sync via `useEffect`, which `eslint-plugin-react-hooks`'s
+`set-state-in-effect` rule flagged as an anti-pattern (React's own current guidance: prefer deriving
+during render over syncing state via an effect) — refactored to compute `selectedDate` as `pickedDate
+plus filteredDates` and `secondsLeft`/`isHoldExpired` as `hold plus nowTick`, both pure derivations,
+with the interval effect only ticking a clock (a legitimate "subscribe to an external system" use of
+an effect) rather than computing application state itself.
+
+**Why:** The `POST /bookings/` schema bug mattered specifically because Section 9's whole hold→
+countdown→confirm flow depends on the create response actually containing `id`/`status`/
+`expires_at` — had it shipped undetected, `tsc` would have blocked every subsequent use of the hold
+object, forcing a hand-written override type at exactly the point CLAUDE.md and this section's own
+acceptance criterion ("no hand-written API response types") explicitly rule out; tracing *why*
+`extend_schema` was ignored (rather than just special-casing the response type in the frontend)
+kept the fix general enough that any future endpoint hitting the same generic-view-mixin pattern
+won't need re-discovering it. The manual verification session surfaced two testing artifacts worth
+recording so they're not mistaken for app bugs later: (1) a slow first `submit` response (several
+minutes, not the usual sub-second) that looked like a frontend hang until a direct `curl` against
+the backend proved the request had actually completed successfully — the UI was correct the whole
+time, the dev environment's WSL/Windows Postgres round-trip was just unusually slow under repeated
+concurrent test traffic; (2) the header's user-menu dropdown did not open under the browser tool's
+*emulated* mobile viewport specifically, while the identical code opened correctly the instant the
+same tab was switched back to desktop width — isolated to the test tool's touch-emulation layer,
+not the app, since Radix's dropdown needs no code of ours to handle real mobile touch correctly.
+Both are noted here rather than silently omitted, per the same "disclose testing limitations
+honestly" standard applied to the token-refresh-retry path in Section 8. The required two-browser
+race test (acceptance criterion's own wording) was run for real: two genuine browser tabs, two
+different logged-in customers, racing an identical open slot with both clicks fired in the same
+tool batch — one tab won the hold, the other got the exact "This time was just taken" + one-click
+alternatives + auto-refreshed grid the spec calls for, which is the actual exclusion-constraint
+guarantee from Section 5/6 surfacing correctly through the full stack, not just a unit-level claim.

@@ -5,10 +5,13 @@ import { RequireRole } from '@/auth/RequireRole'
 import { Layout } from '@/components/Layout'
 import { Toaster } from '@/components/ui/sonner'
 import { AdminHome } from '@/routes/AdminHome'
+import { BookingFlow } from '@/routes/BookingFlow'
 import { CustomerHome } from '@/routes/CustomerHome'
 import { Login } from '@/routes/Login'
+import { MyBookings } from '@/routes/MyBookings'
 import { ProviderHome } from '@/routes/ProviderHome'
 import { Register } from '@/routes/Register'
+import { Services } from '@/routes/Services'
 
 const queryClient = new QueryClient()
 
@@ -24,6 +27,9 @@ function App() {
             <Route element={<RequireRole role="customer" />}>
               <Route element={<Layout />}>
                 <Route path="/" element={<CustomerHome />} />
+                <Route path="/services" element={<Services />} />
+                <Route path="/services/:serviceId/book" element={<BookingFlow />} />
+                <Route path="/bookings" element={<MyBookings />} />
               </Route>
             </Route>
 

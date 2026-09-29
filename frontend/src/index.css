@@ -29,6 +29,7 @@
   --success-bg: #e6f2e8;
   --warning: #8a5a00;
   --warning-bg: #fbeeda;
+  --destructive-bg: #fbeae8;
   --accent-text: #a8431f;
 }
 
@@ -57,6 +58,7 @@
   --success-bg: #1f3324;
   --warning: #e0b44c;
   --warning-bg: #3a2e10;
+  --destructive-bg: #3d2220;
   --accent-text: #dd7a52;
 }
 
@@ -84,6 +86,7 @@
   --color-success-bg: var(--success-bg);
   --color-warning: var(--warning);
   --color-warning-bg: var(--warning-bg);
+  --color-destructive-bg: var(--destructive-bg);
   --color-accent-text: var(--accent-text);
   --radius-sm: calc(var(--radius) - 2px);
   --radius-md: var(--radius);
