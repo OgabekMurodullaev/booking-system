@@ -1,0 +1,39 @@
+{
+	# Defaults to Let's Encrypt production; set ACME_CA to the LE *staging* directory while
+	# testing a fresh deploy to avoid hitting production rate limits.
+	acme_ca {$ACME_CA:https://acme-v02.api.letsencrypt.org/directory}
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	# Applied to every response, including the static SPA build below, which Django's own
+	# SecurityMiddleware (config/settings/prod.py) never sees.
+	header {
+		Strict-Transport-Security "max-age=604800; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+
+	handle /api/* {
+		reverse_proxy web:8000
+	}
+
+	handle /admin/* {
+		reverse_proxy web:8000
+	}
+
+	handle /static/* {
+		root * /srv/static
+		file_server
+	}
+
+	# Everything else is the React build; unmatched paths fall back to index.html so
+	# client-side routing (React Router) handles deep links on refresh.
+	handle {
+		root * /srv/app
+		try_files {path} /index.html
+		file_server
+	}
+}

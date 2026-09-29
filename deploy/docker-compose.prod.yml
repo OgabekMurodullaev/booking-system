@@ -1,0 +1,110 @@
+# Run from the repo root: docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env up -d --build
+# See docs/DEPLOY.md for the full first-deploy checklist.
+
+x-backend: &backend
+  build:
+    context: ../backend
+    target: prod
+  restart: unless-stopped
+  entrypoint: ["/bin/sh", "/deploy/entrypoint.sh"]
+  env_file: ../backend/.env
+  environment:
+    DJANGO_SETTINGS_MODULE: config.settings.prod
+  volumes:
+    - ./entrypoint.sh:/deploy/entrypoint.sh:ro
+    - staticfiles:/app/staticfiles
+  depends_on:
+    db:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  web:
+    <<: *backend
+    command: ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "3"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health/')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  worker:
+    <<: *backend
+    command: ["celery", "-A", "config", "worker", "-l", "info"]
+
+  beat:
+    <<: *backend
+    command: ["celery", "-A", "config", "beat", "-l", "info"]
+
+  caddy:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+      ACME_CA: ${ACME_CA}
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+      - staticfiles:/srv/static:ro
+    depends_on:
+      - web
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  pgdata:
+  redisdata:
+  staticfiles:
+  caddy_data:
+  caddy_config:
