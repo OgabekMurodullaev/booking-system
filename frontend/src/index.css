@@ -1,0 +1,102 @@
+@import 'tailwindcss';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --background: #faf8f5;
+  --foreground: #292524;
+  --card: #ffffff;
+  --card-foreground: #292524;
+  --popover: #ffffff;
+  --popover-foreground: #292524;
+  --primary: #c1502e;
+  --primary-foreground: #ffffff;
+  --secondary: #f0ebe4;
+  --secondary-foreground: #292524;
+  --muted: #f0ebe4;
+  --muted-foreground: #6b6459;
+  --accent: #f7e6de;
+  --accent-foreground: #a8431f;
+  --destructive: #b3261e;
+  --destructive-foreground: #ffffff;
+  --border: #e4ddd3;
+  --input: #e4ddd3;
+  --ring: #a8431f;
+  --radius: 0.375rem;
+
+  /* Custom, non-shadcn-standard tokens used for booking status (see DESIGN.md) */
+  --success: #2f6b3e;
+  --success-bg: #e6f2e8;
+  --warning: #8a5a00;
+  --warning-bg: #fbeeda;
+  --accent-text: #a8431f;
+}
+
+.dark {
+  --background: #1c1917;
+  --foreground: #f2ede7;
+  --card: #26211d;
+  --card-foreground: #f2ede7;
+  --popover: #26211d;
+  --popover-foreground: #f2ede7;
+  --primary: #dd7a52;
+  --primary-foreground: #1c1917;
+  --secondary: #2a2521;
+  --secondary-foreground: #f2ede7;
+  --muted: #2a2521;
+  --muted-foreground: #a39a8e;
+  --accent: #3a241c;
+  --accent-foreground: #dd7a52;
+  --destructive: #e5827a;
+  --destructive-foreground: #1c1917;
+  --border: #3a342e;
+  --input: #3a342e;
+  --ring: #dd7a52;
+
+  --success: #7fbf8e;
+  --success-bg: #1f3324;
+  --warning: #e0b44c;
+  --warning-bg: #3a2e10;
+  --accent-text: #dd7a52;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-success: var(--success);
+  --color-success-bg: var(--success-bg);
+  --color-warning: var(--warning);
+  --color-warning-bg: var(--warning-bg);
+  --color-accent-text: var(--accent-text);
+  --radius-sm: calc(var(--radius) - 2px);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 4px);
+  --font-sans: 'Hanken Grotesk', ui-sans-serif, system-ui, sans-serif;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans;
+  }
+}

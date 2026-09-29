@@ -170,6 +170,10 @@ SPECTACULAR_SETTINGS = {
     "DESCRIPTION": "Appointment booking system API",
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
+    # Read-only fields (id, role, ...) must not show up as required in a generated
+    # request body type — without this, request and response share one schema and
+    # openapi-typescript demands server-assigned fields the client never sends.
+    "COMPONENT_SPLIT_REQUEST": True,
 }
 
 # CLAUDE.md §6 business-rule settings (unused until later sections)
