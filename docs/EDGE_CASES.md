@@ -1,0 +1,59 @@
+# Edge Cases
+
+Every row below is backed by a real, currently-passing test. This file is compiled, not
+aspirational — if a test referenced here is renamed or removed, this row must be updated or
+deleted in the same change.
+
+| Edge case | How it's handled | Test |
+|---|---|---|
+| **Accounts** | | |
+| Duplicate email (case-insensitive) at registration | `UniqueConstraint(Lower("email"))` + serializer-level pre-check | `backend/apps/accounts/tests/test_registration.py::test_register_duplicate_email_case_insensitive_rejected` |
+| Two concurrent registrations with the same email | `register_customer()` catches the `IntegrityError` from the unique constraint and returns a clean `validation_error`, not a 500 | `backend/apps/accounts/tests/test_registration.py::test_concurrent_duplicate_registration_only_one_succeeds` |
+| Password too similar to the user's own email/name | `validate_password()` called with a constructed unsaved `User` instance so `UserAttributeSimilarityValidator` actually runs | `backend/apps/accounts/tests/test_registration.py::test_register_password_similar_to_email_rejected` |
+| Non-IANA timezone string on a user | Rejected in `User.clean()` against `zoneinfo.available_timezones()` | `backend/apps/accounts/tests/test_models.py::test_invalid_timezone_rejected_at_model_level` |
+| Customer tries to change their own role or email via profile update | `role`/`email` excluded from the patch serializer's writable fields | `backend/apps/accounts/tests/test_auth_flow.py::test_me_patch_cannot_change_role_or_email` |
+| **Catalog** | | |
+| Deleting a `Business` that still has staff (provider/admin users) | `User.business` is `on_delete=PROTECT`, not `SET_NULL` or `CASCADE` | `backend/apps/catalog/tests/test_business_deletion.py::test_business_with_staff_cannot_be_deleted` |
+| Deleting a `Business` after its staff has been removed | Same `PROTECT` FK allows deletion once no `User` references it | `backend/apps/catalog/tests/test_business_deletion.py::test_business_can_be_deleted_after_staff_removed` |
+| Service duration not a multiple of 5 minutes | `CheckConstraint` using `RawSQL("duration_minutes %% 5 = 0")` | `backend/apps/catalog/tests/test_models.py::test_service_duration_must_be_multiple_of_5` |
+| Service duration outside 5..480 minutes | `CheckConstraint` on `duration_minutes` range | `backend/apps/catalog/tests/test_models.py::test_service_duration_must_be_in_range` |
+| Deactivating a service (`is_active=False`) that existing bookings reference | Soft delete only; `Service` row and its FK from `Booking` are never touched | `backend/apps/bookings/tests/test_constraints.py::test_deactivated_service_still_referenced_by_existing_booking` |
+| Deactivated service: existing booking stays fully visible, but a *new* hold against it is rejected | View resolves the service with `is_active=True`, returning 404 `service_not_found` for new holds while `BookingDetailView` has no such filter | `backend/apps/bookings/tests/test_edge_cases.py::test_deactivating_service_does_not_affect_existing_booking` |
+| An active service of another business showing up in a cross-business list | Intentional: active services/providers are public catalog data, not tenant-private | `backend/apps/catalog/tests/test_business_isolation.py::test_active_service_of_another_business_is_still_publicly_viewable` |
+| Admin tries to modify another business's service | Queryset scoped to `request.user.business` in the view | `backend/apps/catalog/tests/test_business_isolation.py::test_admin_cannot_patch_another_business_service` |
+| **Scheduling** | | |
+| Two `WorkingHours` intervals overlapping on the same provider/weekday | Validated in `services/working_hours.py` before replace-all save | `backend/apps/scheduling/tests/test_working_hours.py::test_validate_no_overlap_rejects_overlapping_intervals` |
+| Two `WorkingHours` intervals on the same day with a gap (lunch break) | Explicitly allowed — only *overlap* is rejected, not multiplicity | `backend/apps/scheduling/tests/test_working_hours.py::test_validate_no_overlap_allows_lunch_break_gap` |
+| `TimeOff.start >= TimeOff.end` | `CheckConstraint(start__lt=F("end"))` | `backend/apps/scheduling/tests/test_time_off.py::test_start_before_end_check_constraint` |
+| `TimeOff` created that overlaps an already-`confirmed` booking | Booking is **not** auto-cancelled (the provider/admin must decide); it's surfaced via `has_time_off_conflict` on the list/detail serializer instead | `backend/apps/bookings/tests/test_edge_cases.py::test_time_off_over_confirmed_booking_flags_but_does_not_cancel` |
+| DST spring-forward: a local time that never exists that day | `_local_to_utc` detects the round-trip gap and skips the slot | `backend/apps/scheduling/tests/test_availability_service.py::test_dst_spring_forward_skips_gap_and_round_trips` |
+| DST fall-back: a local time that occurs twice that day | `fold=0` used consistently — only the first occurrence is offered | `backend/apps/scheduling/tests/test_availability_service.py::test_dst_fall_back_uses_first_occurrence_only` |
+| Booking requested inside the minimum lead time / past the max advance window | Checked in `validate_lead_and_advance()` against `BOOKING_MIN_LEAD_MINUTES` / `BOOKING_MAX_ADVANCE_DAYS` | `backend/apps/scheduling/tests/test_availability_service.py::test_min_lead_time_respected`, `test_max_advance_respected` |
+| Two providers free for the identical slot | Availability merges them into one `Slot` with both `provider_ids`, not two duplicate slots | `backend/apps/scheduling/tests/test_availability_service.py::test_two_providers_merge_into_one_slot_with_both_ids` |
+| **Bookings — data integrity** | | |
+| Two overlapping bookings for the same provider (incl. buffer) | `ExclusionConstraint(provider, blocked_range &&)` WHERE status IN (pending, confirmed) | `backend/apps/bookings/tests/test_constraints.py::test_overlapping_active_bookings_same_provider_raise_integrity_error` |
+| A booking starting inside the previous booking's buffer window | `blocked_range` includes the buffer, so the exclusion constraint also blocks this | `backend/apps/bookings/tests/test_constraints.py::test_buffer_blocks_booking_starting_within_buffer_window` |
+| A `cancelled` booking's old slot | Excluded from the constraint's `WHERE` clause, so it never blocks a new booking | `backend/apps/bookings/tests/test_constraints.py::test_cancelled_booking_does_not_block` |
+| Same customer double-booked across two different providers at an overlapping time | `ExclusionConstraint(customer, time_range &&)` WHERE status IN (pending, confirmed) | `backend/apps/bookings/tests/test_constraints.py::test_customer_overlap_constraint` |
+| A `pending` booking without `expires_at` | `CheckConstraint`: `status = 'pending'` ⇔ `expires_at IS NOT NULL` | `backend/apps/bookings/tests/test_constraints.py::test_pending_requires_expires_at` |
+| Same `Idempotency-Key` posted twice (sequentially) by the same customer | `UniqueConstraint(customer, idempotency_key)`; `create_hold` looks up the existing row first and returns 200 with it | `backend/apps/bookings/tests/test_idempotency.py::test_replay_with_same_key_returns_same_booking_no_duplicate` |
+| Same `Idempotency-Key` replayed with different body params | Replay returns the *original* booking; changed params are ignored | `backend/apps/bookings/tests/test_idempotency.py::test_replay_ignores_changed_params` |
+| Changing a customer's `timezone` after a booking exists | `Booking.time_range` is stored in UTC and never re-derived from `User.timezone` | `backend/apps/bookings/tests/test_edge_cases.py::test_customer_timezone_change_does_not_touch_stored_booking_time` |
+| Changing a service's price/duration after a booking exists | `price_snapshot`/`duration_snapshot` are copied once at `create_hold` time and never re-read from `Service` | `backend/apps/bookings/tests/test_edge_cases.py::test_booking_snapshots_are_immutable_after_service_changes` |
+| **Bookings — lifecycle & expiry** | | |
+| A pending hold whose 10-minute TTL passed, blocking a real customer | Expired lazily inside `create_hold` (`_expire_overlapping_stale_holds`) before the insert, independent of whether Celery beat is running | `backend/apps/bookings/tests/test_expiry.py::test_lazy_expiry_lets_new_customer_book_the_slot` |
+| Bulk expiry of all stale pending holds | `expire_stale_holds` Celery beat task, run every minute | `backend/apps/bookings/tests/test_expiry.py::test_expire_stale_holds_bulk_transitions_all_due_holds` |
+| Bulk expiry accidentally touching confirmed bookings | Task only ever queries `status=PENDING` | `backend/apps/bookings/tests/test_expiry.py::test_expire_stale_holds_does_not_touch_confirmed_bookings` |
+| Auto-assign with no `provider` given | Picks the candidate with fewest active bookings that day, ties broken by id, retried per-candidate on conflict | `backend/apps/bookings/tests/test_auto_assign.py::test_picks_provider_with_fewest_active_bookings_that_day`, `test_tie_broken_by_id` |
+| Auto-assign where every candidate is already booked | 409 `slot_unavailable` with 3 real alternative slots | `backend/apps/bookings/tests/test_auto_assign.py::test_all_candidates_conflict_returns_409_with_alternatives` |
+| Booking transition that doesn't exist on the state machine | 409 `invalid_transition` | `backend/apps/bookings/tests/test_transitions.py::test_invalid_edges_return_409` |
+| Booking transition attempted by the wrong actor | 403 `permission_denied` | `backend/apps/bookings/tests/test_transitions.py::test_wrong_actor_returns_403` |
+| Confirming a pending booking that was never submitted, or whose approval window expired | 409 `not_submitted` / `hold_expired` | `backend/apps/bookings/tests/test_transitions.py::test_confirming_unsubmitted_pending_returns_409`, `test_confirming_expired_pending_returns_409` |
+| Customer cancels a confirmed booking inside the cancellation window | Allowed, but `is_late_cancellation=True` | `backend/apps/bookings/tests/test_transitions.py::test_late_cancellation_flagged` |
+| Provider (not the customer) cancels inside the same window | Never flagged as a late cancellation — the penalty is customer-specific | `backend/apps/bookings/tests/test_transitions.py::test_provider_cancellation_never_flagged_late` |
+| Completing a booking before `time_range.upper` has passed | 409 `booking_not_yet_ended` | `backend/apps/bookings/tests/test_transitions.py::test_completing_before_end_returns_409` |
+| **Concurrency (proven under `pytest --count=20`, real threads + real Postgres)** | | |
+| 10 customers racing to book the exact same slot | Exactly 1 succeeds (`201`), 9 get `409 slot_unavailable`, via the exclusion constraint | `backend/apps/bookings/tests/test_concurrency.py::test_ten_customers_racing_same_slot_exactly_one_succeeds` |
+| 5 auto-assign requests racing across 3 providers for the same time | Exactly 3 succeed, one per provider | `backend/apps/bookings/tests/test_concurrency.py::test_auto_assign_five_requests_three_providers_exactly_three_succeed` |
+| 5 concurrent requests with the same `Idempotency-Key` | Exactly 1 real `201`, the other 4 replay it as `200` — including the case where the idempotency check and an exclusion-constraint conflict fire on the same insert | `backend/apps/bookings/tests/test_concurrency.py::test_same_idempotency_key_five_concurrent_requests_exactly_one_booking` |
+| A provider confirming and a customer cancelling the same pending booking at the same instant | `transition_booking`'s `select_for_update()` serializes the two calls; every logged transition is a valid `STATE_MACHINE` edge and the persisted status always matches the last log entry — no impossible or duplicated transition is ever recorded | `backend/apps/bookings/tests/test_concurrency.py::test_concurrent_confirm_and_cancel_same_booking_is_consistent` |

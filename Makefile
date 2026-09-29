@@ -1,4 +1,4 @@
-.PHONY: up down migrate test lint fmt shell seed
+.PHONY: up down migrate test test-concurrency lint fmt shell seed
 
 up:
 	docker compose up -d
@@ -11,6 +11,9 @@ migrate:
 
 test:
 	docker compose exec web pytest
+
+test-concurrency:
+	docker compose exec web pytest apps/bookings/tests/test_concurrency.py --count=20
 
 lint:
 	docker compose exec web ruff check .

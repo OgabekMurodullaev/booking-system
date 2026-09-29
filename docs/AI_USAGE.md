@@ -221,3 +221,61 @@ concurrency-critical code: re-running a passing suite once is not enough evidenc
 After the fix, the three-test concurrency suite was run 3 times in a row (9 total passes, 0
 failures) before considering it solid enough to hand off to Section 6's dedicated 20-run
 stress-testing pass.
+
+## Section 6 — Concurrency & edge-case hardening
+
+**What AI generated:** `pytest-repeat` added to `requirements/test.txt` plus a
+`make test-concurrency` target (`pytest apps/bookings/tests/test_concurrency.py --count=20`),
+matching the spec's "for these tests only" scoping rather than repeating the whole suite. A
+fourth concurrency test, `test_concurrent_confirm_and_cancel_same_booking_is_consistent`
+(`test_concurrency.py`): a provider's `confirm_booking` and a customer's `cancel_booking` fired at
+the same instant on the same pending booking via `threading.Barrier(2)`, asserting every logged
+transition is a valid `STATE_MACHINE` edge and the persisted `booking.status` always matches the
+last log row. `has_time_off_conflict`: a DB-level `Exists(TimeOff.objects.filter(provider=OuterRef
+("provider"), start__lt=OuterRef("time_range__endswith"), end__gt=OuterRef
+("time_range__startswith")))` annotation added once in `views.py::_scoped_queryset` (so list,
+detail, and the transition endpoints all get it for free), exposed as a
+`serializers.BooleanField(read_only=True, default=False)` on `BookingSerializer` — `default=False`
+matters because `BookingDetailSerializer` also serializes bookings returned directly from service
+functions (create/submit/confirm/cancel/complete), which were never built from the annotated
+queryset and have no such attribute; DRF's `Field.get_attribute()` falls back to `default` on
+`AttributeError` rather than raising. `test_business_deletion.py` (`catalog`): two new tests
+proving `User.business`'s `on_delete=PROTECT` (set in Section 3) actually behaves as intended —
+deleting a `Business` with staff raises `ProtectedError`, and deleting the staff first lets the
+business delete succeed — a gap flagged during Section 6's code-race review as "verified manually
+once, never automated." `test_edge_cases.py` (`bookings`): the four new edge cases from the spec —
+time-off created over an already-`confirmed` booking flags `has_time_off_conflict` without
+cancelling the booking; `price_snapshot`/`duration_snapshot` stay fixed after the underlying
+`Service.price`/`duration_minutes` changes; deactivating a service leaves an existing booking fully
+retrievable while rejecting a *new* hold against it with 404 `service_not_found`; changing
+`User.timezone` never touches a booking's stored UTC `time_range`. `docs/EDGE_CASES.md`: one table
+(`Edge case | How it's handled | Test`) compiling every edge case built across Sections 3-5 plus
+this section's five, each row's test name checked against the actual suite (via a full
+`grep '^def test_'` across `apps/`) before being written in, not recalled from memory.
+
+**What I changed / rejected:** The new confirm/cancel concurrency test's first version was wrong,
+not the code: it assumed exactly one of `confirm`/`cancel` must fail, and failed on the very first
+run when both succeeded (`pending -> confirmed -> cancelled`). Tracing it through `STATE_MACHINE`
+showed this is legitimate — `select_for_update()` correctly serializes the two calls, but
+`(confirmed, cancelled)` is itself a valid edge (a customer may cancel an already-confirmed
+booking), so a cancel that loses the initial race and re-reads a `confirmed` row is allowed to
+succeed as a valid follow-on transition, not a bug. Rewrote the assertions to check what the
+acceptance criterion actually means — no impossible transition ever logged, and `booking.status`
+always matches the log — instead of forcing a stricter "exactly one must fail" shape that doesn't
+hold. No production code changes were needed for this scenario: the code-race review's conclusion
+(`transition_booking`'s existing `select_for_update()` already closes this race) held up under the
+stress test.
+
+**Why:** This is the one section where "no bug found" is itself the noteworthy result — Sections
+2 and 5 each caught a real concurrency bug via a first-time real-thread test; Section 6's job was
+to *prove*, not find, so a wrong test assumption failing on the first run needed to be diagnosed
+carefully (read the state machine, don't just loosen the assertion) rather than reflexively treated
+as another race bug to patch. The `has_time_off_conflict` `default=False` choice specifically
+avoids a class of bug this session had already been burned by twice (Section 2's registration race,
+Section 5's idempotency/deadlock races): trusting that every code path constructing a
+`BookingDetailSerializer` goes through the annotated queryset would have caused a silent 500 on
+every `create`/`submit`/`confirm`/`cancel`/`complete` response the moment the field was added, since
+none of those return values come from `_scoped_queryset`. All 4 concurrency tests were run 20 times
+each (`pytest --count=20`, 80 total runs) with zero failures before considering the acceptance
+criterion met, and the full 188-test suite plus `ruff check`/`ruff format --check` were run clean
+before finishing.
