@@ -1,7 +1,75 @@
 # AI Usage Log
 
-Per-section notes on AI-generated work: what the AI produced, what was changed or rejected
-by review, and why. Consolidated into a final summary in Section 12.
+## Summary
+
+This entire project — backend, frontend, tests, deploy config, and this documentation — was
+built with Claude Code, working through the 12 sections defined in `docs/ai/PROMPTS.md` against
+the rules in the repo's `CLAUDE.md`. The per-section log below (kept intact, not summarized
+away) is the detailed record; this section pulls the pattern together.
+
+**Workflow.** Every section started in plan mode: the AI read the relevant existing code first
+(never assumed a signature, a field name, or a query result — verified it, via a Django shell
+probe, a test run, or a schema read), wrote a concrete plan naming the actual files and
+functions involved, and waited for explicit approval before writing any code. Each section
+ended with the full backend test suite, `ruff`, and the frontend `typecheck`/`lint`/`build`
+passing before being proposed for commit — and commits were never made without an explicit
+go-ahead, every single time, including this one.
+
+**Tools used.** Claude Code (Sonnet 5) for all implementation; its built-in browser tool for
+every piece of manual frontend verification claimed anywhere in this log — logging in as real
+seeded users, clicking through real flows, reading real network responses — not a description
+of what the code *should* do. Two real, separately-running browser tabs for the concurrency race
+test in Section 9. A Django shell used repeatedly to verify a query's actual behavior
+(`TruncDate` on a range field's lower bound, an `IntegrityError`'s exact constraint name) before
+committing to it in code, rather than trusting documentation or memory.
+
+**Concrete examples of AI output that was wrong, and how it was caught:**
+
+- **Section 5** — the idempotency-replay check only looked for an existing `(customer, key)`
+  match after a *specific* constraint fired, so a concurrent request that hit a *different*
+  constraint first (a real race, not a hypothetical) got a wrong 409 instead of the correct 200
+  replay; a separate run of the same real-thread concurrency test surfaced an intermittent
+  Postgres deadlock (`SQLSTATE 40P01`) that the original retry loop didn't catch at all, leaking
+  a raw 500. Both were only found because the test used real threads against real Postgres, per
+  `CLAUDE.md`'s own testing rule — a mocked version of the same test would have passed cleanly
+  and shipped both bugs.
+- **Section 8** — `drf-spectacular` silently generated the *wrong* response schema for the login
+  endpoint (it documented the input shape, not the `access`/`refresh`/`user` payload the view
+  actually returns) because the extra fields are injected at runtime, invisible to static
+  introspection; a second, separate bug made every read-only field on every serializer show up
+  as *required* in the generated request type. Both were caught by `tsc` itself refusing to
+  compile, not by inspection — exactly the failure mode Section 8's own acceptance criterion
+  ("no hand-written API response types") exists to prevent.
+- **Section 9** — the same drf-spectacular schema-decorator bug reappeared in a different shape
+  for `POST /bookings/` (a generic-view mixin method, where `@extend_schema` on the method
+  itself is silently ignored) — traced to the actual cause rather than patched around with a
+  one-off type override, so the fix generalizes to any future endpoint hitting the same pattern.
+- **Section 10** — three real bugs, all found only by clicking through the real running app, not
+  by any automated check: a working-hours editor whose local edit state was silently wiped by a
+  routine background refetch (traced to comparing object identity instead of the provider's own
+  id); a `204 No Content` DELETE response being misread as a failure everywhere in the app,
+  showing a false error toast on every successful delete; an admin dialog that let a *deactivated*
+  service still be assigned to a new provider, because the shared services list wasn't filtered
+  by `is_active`.
+
+**What was verified manually vs. only by automated checks vs. disclosed as unverified.** Every
+frontend flow claimed as "working" in this log was clicked through for real against a running
+dev backend and real Postgres data — Section 9's two-tab booking race, every one of Section 10's
+eight provider/admin pages, this section's three demo logins and the exact `curl` sequence in
+`docs/API.md`. Where that wasn't possible, it says so rather than implying otherwise: Section
+11's `deploy/docker-compose.prod.yml` was never actually brought up against a live Docker daemon
+(only `docker compose config`, `bash -n`, and `python manage.py check --deploy` were run for
+real — see `docs/DEPLOY.md`'s own "assumptions I could not verify" section), and this section's
+own quick-start `docker compose up -d` line was verified by proxy — the commands it runs
+(`migrate`, `seed_demo`) were run and checked for real, against the same Postgres/Redis the
+compose file provides, just via a native local setup rather than through Compose itself, by
+explicit agreement rather than a claim that the exact three-line quick start was executed
+verbatim.
+
+## Per-section log
+
+Notes on AI-generated work per section: what the AI produced, what was changed or rejected
+by review, and why.
 
 ## Section 1 — Monorepo, Docker (dev), settings
 
@@ -577,3 +645,47 @@ stops (rather than a confident-sounding "tested end to end") is the same standar
 applied to every partially-unverifiable claim since Section 8's token-refresh path — it's more
 useful to you to know precisely which of `docs/DEPLOY.md`'s 13 checklist steps are genuinely
 new ground than to discover it the hard way on the actual server.
+
+## Section 12 — Seed data & documentation
+
+**What AI generated:** `apps/common/management/commands/seed_demo.py` (`--reset` flag,
+idempotent otherwise): one business ("Demo Salon", `Asia/Tashkent`), 5 services of varied
+duration/price/buffer, 3 providers (one with a lunch-break split shift, one with an upcoming
+`TimeOff` row) built via the existing `create_provider`/`replace_working_hours` service
+functions rather than parallel ORM logic, 16 customers, and ~57 bookings spanning the past and
+next 14 days across every status. Future bookings go through the real `create_hold` →
+`submit_booking` → `confirm_booking`/`cancel_booking` pipeline (the actual code path a live user
+hits); past bookings are built directly via the ORM — `create_hold`'s own lead-time validation
+correctly refuses any start time that isn't in the future, so there's no live-flow way to create
+historical data — with hand-written `BookingStatusLog` rows so the status timeline still reads
+sensibly. `README.md`, `docs/ARCHITECTURE.md` (three Mermaid diagrams: container/request flow,
+data model ER, booking lifecycle state machine — each checked against the actual code they
+describe, not an idealized version), `docs/API.md` (every `curl` example actually run against a
+live dev server; one of them captures a real `409 slot_unavailable` response, not a
+hypothetical one), and a consolidated top section in this file.
+
+**What I changed / rejected:** Two real bugs in the seed script were caught only by actually
+running it and reading the output, not by review: (1) the first version picked a random date
+for each planned booking independently of which weekday it landed on, so roughly 1 in 7 attempts
+landed on a Sunday — a day every provider is closed — wasting the *entire* retry budget for that
+booking (all 25 retries just varied provider/service against a date with zero working hours).
+Fixed with `_random_open_date`, which resamples the date itself, not just the provider, when it
+lands on a closed day; booking counts went from 50-52 (of a 60 target) to a consistent 57.
+(2) The very first run's summary line used an em dash, which rendered as `�` in this Windows
+terminal's console encoding — recognized as a real portability risk (the same command is meant
+to run inside a Linux container via `docker compose exec web`, where it likely wouldn't
+reproduce, making it an easy latent bug to ship unnoticed) and replaced with a plain hyphen.
+Separately, on request: Docker Desktop was not started to live-verify `docker compose up -d`
+end to end (the user's own machine struggles with Docker running), so `README.md`'s quick start
+explicitly discloses that its three commands were verified via a native local Postgres/Redis
+setup rather than through Compose itself, not silently presented as fully exercised.
+
+**Why:** The Sunday bug is the same class of thing Section 10's manual sweep kept finding — a
+silent, date-shaped edge case that a type checker or a linter has no way to catch, only running
+the actual command and looking hard at whether the resulting numbers make sense (`~60` target,
+consistently landing at ~50 was itself the signal that something was systematically wrong, not
+just noisy). The screenshots the section's own requirements ask for were deliberately left out
+rather than faked: there is no tool in this environment that saves a browser screenshot to a
+committable file path, and a broken image link or a placeholder graphic would be worse than an
+honest note that they're not included yet — consistent with this log's standing rule of
+disclosing exactly what wasn't done rather than implying it was.
