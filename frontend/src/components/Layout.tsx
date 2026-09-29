@@ -21,8 +21,28 @@ function initials(name: string): string {
     .toUpperCase()
 }
 
+const NAV_LINKS: Record<string, { to: string; label: string }[]> = {
+  customer: [
+    { to: '/services', label: 'Services' },
+    { to: '/bookings', label: 'My Bookings' },
+  ],
+  provider: [
+    { to: '/provider', label: 'Schedule' },
+    { to: '/provider/approvals', label: 'Approvals' },
+    { to: '/provider/working-hours', label: 'Working Hours' },
+    { to: '/provider/time-off', label: 'Time Off' },
+  ],
+  admin: [
+    { to: '/admin', label: 'Dashboard' },
+    { to: '/admin/services', label: 'Services' },
+    { to: '/admin/providers', label: 'Providers' },
+    { to: '/admin/bookings', label: 'Bookings' },
+  ],
+}
+
 export function Layout() {
   const { user, logout } = useAuth()
+  const navLinks = user ? (NAV_LINKS[user.role] ?? []) : []
 
   return (
     <div className="min-h-screen bg-background">
@@ -32,22 +52,17 @@ export function Layout() {
             <Link to="/" className="font-semibold">
               Booking System
             </Link>
-            {user?.role === 'customer' && (
-              <nav className="hidden items-center gap-4 text-sm sm:flex">
+            <nav className="hidden items-center gap-4 text-sm sm:flex">
+              {navLinks.map((link) => (
                 <Link
-                  to="/services"
+                  key={link.to}
+                  to={link.to}
                   className="text-muted-foreground hover:text-foreground"
                 >
-                  Services
+                  {link.label}
                 </Link>
-                <Link
-                  to="/bookings"
-                  className="text-muted-foreground hover:text-foreground"
-                >
-                  My Bookings
-                </Link>
-              </nav>
-            )}
+              ))}
+            </nav>
           </div>
 
           {user && (
@@ -79,15 +94,14 @@ export function Layout() {
                       </span>
                     </div>
                   </DropdownMenuLabel>
-                  {user.role === 'customer' && (
+                  {navLinks.length > 0 && (
                     <>
                       <DropdownMenuSeparator />
-                      <DropdownMenuItem asChild className="sm:hidden">
-                        <Link to="/services">Services</Link>
-                      </DropdownMenuItem>
-                      <DropdownMenuItem asChild className="sm:hidden">
-                        <Link to="/bookings">My Bookings</Link>
-                      </DropdownMenuItem>
+                      {navLinks.map((link) => (
+                        <DropdownMenuItem key={link.to} asChild className="sm:hidden">
+                          <Link to={link.to}>{link.label}</Link>
+                        </DropdownMenuItem>
+                      ))}
                     </>
                   )}
                   <DropdownMenuSeparator />

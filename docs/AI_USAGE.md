@@ -461,3 +461,63 @@ different logged-in customers, racing an identical open slot with both clicks fi
 tool batch — one tab won the hold, the other got the exact "This time was just taken" + one-click
 alternatives + auto-refreshed grid the spec calls for, which is the actual exclusion-constraint
 guarantee from Section 5/6 surfacing correctly through the full stack, not just a unit-level claim.
+
+## Section 10 — Frontend: provider & admin panels
+
+**What AI generated:** One new backend endpoint, `GET /api/v1/stats/`
+(`apps/bookings/services/stats.py::compute_business_stats`, admin-only, business-scoped): 6 fixed
+queries regardless of data volume — one GROUP BY (`TruncDate` on the range field's lower bound,
+tz-aware) covering both the 14-day bar-chart series and "today's count" from the same result, one
+`aggregate()` for cancellation rate and late-cancellation count, and per-provider utilization
+computed in Python from one `WorkingHours` query (exploiting that each weekday occurs exactly
+twice in any 14-day window, so capacity is `sum(interval minutes) * 2` with no per-day loop) and
+one `Sum(duration_snapshot)` query. Verified empirically via Django shell before committing to the
+query shapes, then proven with a `CaptureQueriesContext` test showing identical query count for a
+handful of bookings vs many. Also added `provider_id` to `UserSerializer` (the frontend's only way
+for a signed-in provider to learn their own `Provider` row id, since the public providers list is
+cross-business and paginated) and `customer_name`/`service_name` read-only fields to
+`BookingSerializer` (both read off the already-`select_related` objects, no new queries). Frontend:
+4 provider routes (`Schedule` — day/week toggle over a simple custom grid per the spec's own
+allowance, not a calendar library, with a detail `Sheet` gating Confirm/Complete on the same rules
+the backend enforces; `Approvals` — submitted-pending bookings with Confirm / Reject-with-reason;
+`WorkingHours` — per-weekday interval editor with client-side overlap validation mirroring the
+backend's `validate_no_overlap`; `TimeOff` — create/list/delete) and 4 admin routes (`Dashboard` —
+stat cards + a `recharts` bar chart + a utilization table; `Services`/`Providers`/`Bookings` — CRUD
+tables behind shadcn `Dialog`s, the last with status/provider/service/date filters and
+next/previous pagination). `Layout`'s nav became a role-keyed link map instead of the
+customer-only conditional added in Section 9. New shadcn primitives (`table`, `dialog`, `textarea`,
+`switch`) hit the same Windows CLI path-alias bug as Sections 8-9 (files land in a literal `./@/`
+folder), fixed the same way.
+
+**What I changed / rejected:** Three real bugs were found and fixed, none of them caught by
+`typecheck`/`lint`/`build` — only by exercising every surface against the real dev backend: (1)
+`WorkingHours`'s local edit state was originally seeded from fetched data by comparing the fetched
+object's own reference (`data !== loadedFor`); a background TanStack Query refetch (e.g. window
+focus) returns a new object with identical content, which re-triggered the seed branch and
+silently wiped an in-progress, unsaved interval the instant the tab regained focus. Fixed by
+keying the seed check on `providerId` identity instead, so it only re-seeds when actually switching
+providers. (2) `unwrap()` (`src/api/errors.ts`) treated `data !== undefined` as the sole success
+signal; a `DELETE` returning `204 No Content` has no body to parse even on genuine success, so
+every successful delete in the app fell into the error branch and showed a false "Something went
+wrong" toast even though the deletion had already succeeded server-side. Fixed by checking
+`response.ok` instead, using the `response` object `unwrap` already had in scope. (3) The admin
+"New provider" / "Edit services" dialog's service checklist (`ServiceCheckboxes` in
+`admin/Providers.tsx`) listed every service returned by `useServices()` without filtering
+`is_active`, so a deactivated (soft-deleted) service was still selectable when assigning a
+provider — caught only by deactivating a service and then opening the dialog during the final
+manual sweep. Fixed with a one-line `.filter((service) => service.is_active)`. Beyond those three,
+no changes on review — the plan's decisions (stats query shapes, the custom-grid schedule view,
+client-side working-hours overlap validation, the role-keyed nav map) were accepted as-is.
+
+**Why:** All three bugs share the same root cause as Section 9's `set-state-in-effect` catch and
+Section 8's schema-trust bugs: code that looked correct against a single happy-path click, but was
+wrong under a condition only real interaction (a background refetch, a genuine empty-body HTTP
+response, a soft-deleted row still present in a shared list endpoint) actually exercises — none of
+them are the kind of thing a type checker or a mocked unit test would surface, which is why this
+section's manual sweep deliberately covered every provider and admin surface against live dev data
+rather than stopping once the pages typechecked and rendered. The stats endpoint's numbers were
+cross-checked by calling `compute_business_stats` directly against the same live database the
+dashboard was reading from and diffing the two outputs field-by-field, rather than eyeballing
+"the chart looks about right" — they matched exactly. The full backend suite (200 tests) and a
+clean `typecheck`/`lint`/`build` were run once more after all three fixes, not just after the
+initial implementation pass.

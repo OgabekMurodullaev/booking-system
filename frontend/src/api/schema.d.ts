@@ -352,6 +352,22 @@ export interface paths {
         patch: operations["api_v1_services_partial_update"];
         trace?: never;
     };
+    "/api/v1/stats/": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["api_v1_stats_retrieve"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -368,8 +384,10 @@ export interface components {
         Booking: {
             readonly id: number;
             readonly customer: number;
+            readonly customer_name: string;
             readonly provider: number;
             readonly service: number;
+            readonly service_name: string;
             /** Format: date-time */
             readonly start: string;
             /** Format: date-time */
@@ -401,8 +419,10 @@ export interface components {
         BookingDetail: {
             readonly id: number;
             readonly customer: number;
+            readonly customer_name: string;
             readonly provider: number;
             readonly service: number;
+            readonly service_name: string;
             /** Format: date-time */
             readonly start: string;
             /** Format: date-time */
@@ -434,6 +454,11 @@ export interface components {
             reason?: string;
             /** Format: date-time */
             readonly created_at: string;
+        };
+        BookingsPerDay: {
+            /** Format: date */
+            date: string;
+            count: number;
         };
         CancelBookingRequest: {
             /** @default  */
@@ -568,6 +593,12 @@ export interface components {
             email: string;
             full_name: string;
         };
+        ProviderUtilization: {
+            provider_id: number;
+            provider_name: string;
+            /** Format: double */
+            utilization_percent: number;
+        };
         Register: {
             readonly id: number;
             /** Format: email */
@@ -627,6 +658,14 @@ export interface components {
             end: string;
             provider_ids: number[];
         };
+        Stats: {
+            today_bookings_count: number;
+            bookings_per_day: components["schemas"]["BookingsPerDay"][];
+            /** Format: double */
+            cancellation_rate: number;
+            late_cancellation_count: number;
+            provider_utilization: components["schemas"]["ProviderUtilization"][];
+        };
         /**
          * @description * `pending` - Pending
          *     * `confirmed` - Confirmed
@@ -664,6 +703,7 @@ export interface components {
             full_name: string;
             readonly role: components["schemas"]["RoleEnum"];
             timezone?: string;
+            readonly provider_id: number | null;
         };
         UserRequest: {
             full_name: string;
@@ -1576,6 +1616,25 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ServiceAdmin"];
+                };
+            };
+        };
+    };
+    api_v1_stats_retrieve: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Stats"];
                 };
             };
         };
