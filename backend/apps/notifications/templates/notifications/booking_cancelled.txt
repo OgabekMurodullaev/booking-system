@@ -1,0 +1,10 @@
+Hi {{ recipient_name }},
+
+Your booking has been cancelled.
+
+Service: {{ service_name }}
+Provider: {{ provider_name }}
+Was scheduled for: {{ start_local }} - {{ end_local }} ({{ timezone_name }})
+{% if cancellation_reason %}Reason: {{ cancellation_reason }}{% endif %}
+
+The calendar invite has been cancelled; a cancellation file is attached.

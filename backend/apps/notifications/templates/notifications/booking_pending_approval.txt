@@ -1,0 +1,9 @@
+Hi {{ recipient_name }},
+
+A customer has requested a booking that needs your approval.
+
+Customer: {{ customer_name }}
+Service: {{ service_name }}
+When: {{ start_local }} - {{ end_local }} ({{ timezone_name }})
+
+Please confirm or cancel it from your dashboard.

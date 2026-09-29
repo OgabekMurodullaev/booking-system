@@ -1,0 +1,9 @@
+<p>Hi {{ recipient_name }},</p>
+<p>Your booking has been cancelled.</p>
+<ul>
+  <li><strong>Service:</strong> {{ service_name }}</li>
+  <li><strong>Provider:</strong> {{ provider_name }}</li>
+  <li><strong>Was scheduled for:</strong> {{ start_local }} - {{ end_local }} ({{ timezone_name }})</li>
+  {% if cancellation_reason %}<li><strong>Reason:</strong> {{ cancellation_reason }}</li>{% endif %}
+</ul>
+<p>The calendar invite has been cancelled; a cancellation file is attached.</p>

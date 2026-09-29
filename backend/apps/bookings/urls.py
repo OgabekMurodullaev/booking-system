@@ -9,4 +9,5 @@ urlpatterns = [
     path("<int:pk>/confirm/", views.BookingConfirmView.as_view(), name="booking-confirm"),
     path("<int:pk>/cancel/", views.BookingCancelView.as_view(), name="booking-cancel"),
     path("<int:pk>/complete/", views.BookingCompleteView.as_view(), name="booking-complete"),
+    path("<int:pk>/calendar.ics", views.BookingCalendarView.as_view(), name="booking-calendar"),
 ]
