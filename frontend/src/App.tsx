@@ -4,12 +4,18 @@ import { AuthProvider } from '@/auth/AuthContext'
 import { RequireRole } from '@/auth/RequireRole'
 import { Layout } from '@/components/Layout'
 import { Toaster } from '@/components/ui/sonner'
-import { AdminHome } from '@/routes/AdminHome'
+import { Bookings as AdminBookings } from '@/routes/admin/Bookings'
+import { Dashboard } from '@/routes/admin/Dashboard'
+import { Providers as AdminProviders } from '@/routes/admin/Providers'
+import { Services as AdminServices } from '@/routes/admin/Services'
 import { BookingFlow } from '@/routes/BookingFlow'
 import { CustomerHome } from '@/routes/CustomerHome'
 import { Login } from '@/routes/Login'
 import { MyBookings } from '@/routes/MyBookings'
-import { ProviderHome } from '@/routes/ProviderHome'
+import { Approvals } from '@/routes/provider/Approvals'
+import { Schedule } from '@/routes/provider/Schedule'
+import { TimeOff } from '@/routes/provider/TimeOff'
+import { WorkingHours } from '@/routes/provider/WorkingHours'
 import { Register } from '@/routes/Register'
 import { Services } from '@/routes/Services'
 
@@ -35,13 +41,19 @@ function App() {
 
             <Route element={<RequireRole role="provider" />}>
               <Route element={<Layout />}>
-                <Route path="/provider" element={<ProviderHome />} />
+                <Route path="/provider" element={<Schedule />} />
+                <Route path="/provider/approvals" element={<Approvals />} />
+                <Route path="/provider/working-hours" element={<WorkingHours />} />
+                <Route path="/provider/time-off" element={<TimeOff />} />
               </Route>
             </Route>
 
             <Route element={<RequireRole role="admin" />}>
               <Route element={<Layout />}>
-                <Route path="/admin" element={<AdminHome />} />
+                <Route path="/admin" element={<Dashboard />} />
+                <Route path="/admin/services" element={<AdminServices />} />
+                <Route path="/admin/providers" element={<AdminProviders />} />
+                <Route path="/admin/bookings" element={<AdminBookings />} />
               </Route>
             </Route>
 

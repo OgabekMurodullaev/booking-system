@@ -2,6 +2,7 @@ import zoneinfo
 
 from django.contrib.auth.password_validation import validate_password
 from django.core import exceptions as django_exceptions
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
@@ -10,10 +11,21 @@ from apps.accounts.services.registration import register_customer
 
 
 class UserSerializer(serializers.ModelSerializer):
+    provider_id = serializers.SerializerMethodField()
+
     class Meta:
         model = User
-        fields = ["id", "email", "full_name", "role", "timezone"]
-        read_only_fields = ["id", "email", "role"]
+        fields = ["id", "email", "full_name", "role", "timezone", "provider_id"]
+        read_only_fields = ["id", "email", "role", "provider_id"]
+
+    @extend_schema_field(serializers.IntegerField(allow_null=True))
+    def get_provider_id(self, obj: User) -> int | None:
+        # The frontend has no other way to learn "my own Provider row id" — the
+        # public/customer-facing providers list is cross-business and paginated, so
+        # a provider-role user can't reliably find themselves in it. Exposed here
+        # instead of adding a dedicated endpoint for one integer.
+        provider = getattr(obj, "provider_profile", None)
+        return provider.id if provider else None
 
 
 class RegisterSerializer(serializers.ModelSerializer):

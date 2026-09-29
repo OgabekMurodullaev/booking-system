@@ -20,14 +20,18 @@ class BookingSerializer(serializers.ModelSerializer):
     end = serializers.SerializerMethodField()
     has_time_off_conflict = serializers.BooleanField(read_only=True, default=False)
     would_be_late_cancellation = serializers.SerializerMethodField()
+    customer_name = serializers.SerializerMethodField()
+    service_name = serializers.SerializerMethodField()
 
     class Meta:
         model = Booking
         fields = [
             "id",
             "customer",
+            "customer_name",
             "provider",
             "service",
+            "service_name",
             "start",
             "end",
             "status",
@@ -47,6 +51,17 @@ class BookingSerializer(serializers.ModelSerializer):
     @extend_schema_field(serializers.DateTimeField)
     def get_start(self, obj: Booking):
         return _datetime_field.to_representation(obj.time_range.lower)
+
+    @extend_schema_field(serializers.CharField)
+    def get_customer_name(self, obj: Booking) -> str:
+        # The provider/admin views need to know who booked, not just a bare id — the
+        # queryset already select_related("customer") everywhere this serializer is
+        # used, so this doesn't add a query.
+        return obj.customer.full_name
+
+    @extend_schema_field(serializers.CharField)
+    def get_service_name(self, obj: Booking) -> str:
+        return obj.service.name
 
     @extend_schema_field(serializers.DateTimeField)
     def get_end(self, obj: Booking):
@@ -81,3 +96,22 @@ class BookingCreateSerializer(serializers.Serializer):
 
 class CancelBookingSerializer(serializers.Serializer):
     reason = serializers.CharField(required=False, allow_blank=True, default="")
+
+
+class BookingsPerDaySerializer(serializers.Serializer):
+    date = serializers.DateField()
+    count = serializers.IntegerField()
+
+
+class ProviderUtilizationSerializer(serializers.Serializer):
+    provider_id = serializers.IntegerField()
+    provider_name = serializers.CharField()
+    utilization_percent = serializers.FloatField()
+
+
+class StatsSerializer(serializers.Serializer):
+    today_bookings_count = serializers.IntegerField()
+    bookings_per_day = BookingsPerDaySerializer(many=True)
+    cancellation_rate = serializers.FloatField()
+    late_cancellation_count = serializers.IntegerField()
+    provider_utilization = ProviderUtilizationSerializer(many=True)

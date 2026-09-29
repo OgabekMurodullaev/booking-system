@@ -1,6 +1,7 @@
 from django.db.models import Exists, OuterRef
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import generics, status
@@ -10,6 +11,7 @@ from rest_framework.views import APIView
 
 from apps.catalog.models import Provider, Service
 from apps.common.exceptions import DomainError
+from apps.common.permissions import IsBusinessAdmin
 from apps.notifications.ics import build_ics
 from apps.scheduling.models import TimeOff
 
@@ -20,6 +22,7 @@ from .serializers import (
     BookingDetailSerializer,
     BookingSerializer,
     CancelBookingSerializer,
+    StatsSerializer,
 )
 from .services.booking import (
     cancel_booking,
@@ -28,6 +31,7 @@ from .services.booking import (
     create_hold,
     submit_booking,
 )
+from .services.stats import compute_business_stats
 
 
 def _resolve_service(service_id) -> Service:
@@ -207,3 +211,12 @@ class BookingCalendarView(APIView):
         response = HttpResponse(ics_bytes, content_type="text/calendar")
         response["Content-Disposition"] = f'attachment; filename="booking-{booking.id}.ics"'
         return response
+
+
+class StatsView(APIView):
+    permission_classes = [IsAuthenticated, IsBusinessAdmin]
+
+    @extend_schema(request=None, responses=StatsSerializer)
+    def get(self, request):
+        stats = compute_business_stats(request.user.business, timezone.now())
+        return Response(StatsSerializer(stats).data)
