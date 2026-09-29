@@ -166,7 +166,7 @@ commented-out `workflow_run` block already in the file, and add
 | `DEBUG` | Ignored in prod (`config.settings.prod` hardcodes `DEBUG = False`) |
 | `DJANGO_ALLOWED_HOSTS` | Your domain, no scheme |
 | `DJANGO_CSRF_TRUSTED_ORIGINS` | Your domain, **with** scheme (`https://...`) |
-| `SECURE_SSL_REDIRECT` | Defaults `True` — redirects any stray plain-HTTP request to HTTPS |
+| `SECURE_SSL_REDIRECT` | Defaults `True` — redirects any stray plain-HTTP request to HTTPS. **Set to `False`** if Caddy isn't actually terminating TLS (e.g. the shared-host port workaround below) — otherwise every request loops into a redirect to an HTTPS port nothing is really listening on |
 | `SECURE_HSTS_SECONDS` | Defaults to 1 week; raise once the deploy is confirmed stable |
 | `DATABASE_URL` | Points at the `db` service, must match `deploy/.env`'s Postgres creds |
 | `REDIS_URL` / `CELERY_BROKER_URL` / `CELERY_RESULT_BACKEND` | Point at the `redis` service |
@@ -176,9 +176,21 @@ commented-out `workflow_run` block already in the file, and add
 
 | Variable | Purpose |
 |---|---|
-| `DOMAIN` | Site address Caddy serves; also drives automatic HTTPS |
+| `DOMAIN` | Site address Caddy serves; also drives automatic HTTPS. Use an explicit `http://...` value (no automatic HTTPS attempt) if you're not terminating TLS here |
 | `ACME_CA` | Leave blank for real certs; set to LE staging while testing |
 | `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` | Must match `backend/.env`'s `DATABASE_URL` |
+| `CADDY_HTTP_PORT` / `CADDY_HTTPS_PORT` | Optional; only needed if 80/443 are already taken on this host by another site. Set `DOMAIN` to an explicit `http://` address and `SECURE_SSL_REDIRECT=False` in `backend/.env` too when you do this — see "Deploying on a shared host" below |
+
+### Deploying on a shared host (ports 80/443 already taken)
+
+If the VPS already runs other sites behind their own nginx (a real scenario this was actually
+deployed against), don't touch that nginx. Instead: pick two free ports (check with
+`ss -tulpn | grep -E ':PORT'`), set `CADDY_HTTP_PORT`/`CADDY_HTTPS_PORT` in `deploy/.env` to
+them, set `DOMAIN=http://your-domain-or-sslip-host` (the explicit scheme stops Caddy from
+attempting to get a TLS cert on a non-standard port), and set `SECURE_SSL_REDIRECT=False` in
+`backend/.env` (otherwise Django redirects every request to an HTTPS port nothing is listening
+on). The demo ends up at `http://your-domain:CADDY_HTTP_PORT/` — no TLS, which is a reasonable
+trade-off for a demo/test deployment that isn't allowed to touch the host's existing services.
 
 ### GitHub Actions secrets (for `deploy.yml`)
 
@@ -189,28 +201,35 @@ commented-out `workflow_run` block already in the file, and add
 | `DEPLOY_SSH_KEY` | Private key matching that user's `authorized_keys` |
 | `DEPLOY_DOMAIN` | Used for the post-deploy `curl` smoke check |
 
-## 5. Assumptions I could not verify locally
+## 5. Verified against a real deploy — bugs found and fixed
 
-This section was built and reviewed carefully, but the following were **not** actually
-exercised end to end — flagging them rather than claiming a false "verified":
+This stack was first built and reviewed without a live Docker daemon available (only
+`docker compose config`, `bash -n`, and `python manage.py check --deploy` were run for real —
+see the git history around this file's first version if you want that earlier, more hedged
+wording). It has since been deployed for real, to a shared Hetzner VPS already running two
+other sites behind their own nginx. Three real bugs surfaced only by actually running it, none
+of them caught by any local check beforehand:
 
-- **`docker compose -f deploy/docker-compose.prod.yml up --build` was never run.** Docker
-  Desktop's daemon isn't running in the dev environment this was built in (confirmed:
-  `docker ps` fails to reach the daemon). What *was* verified: `docker compose ... config`
-  (client-side YAML parsing + `${VAR}` interpolation) succeeded cleanly and resolved all six
-  services, build contexts, volumes, and the env-file/environment merge exactly as designed.
-  The actual image builds, container startup, health checks, and the Caddy→web→Postgres
-  request path have not been run.
-- **`entrypoint.sh` and `backup.sh`** were checked with `bash -n` (syntax only) — no
-  `shellcheck` binary was available to lint them, and neither has actually executed inside a
-  container.
-- **The Caddyfile** was checked by careful reading against Caddy's documented syntax (global
-  options block, `acme_ca` with a placeholder default, `handle`/`file_server`/`try_files`) —
-  no local `caddy` binary was available to run `caddy validate` against it.
-- **`deploy.yml` has never run.** No real VPS, DNS record, or GitHub Actions secrets exist yet
-  for this project — the workflow is manual-trigger-only specifically so the first real run is
-  a deliberate, watched action per the checklist above, not an assumption that it works.
-- **`python manage.py check --deploy` was run against `config.settings.prod`** with dummy env
-  vars and came back clean except for two expected warnings: a weak dummy `SECRET_KEY` (real
-  deploys must generate a proper one — see step 3) and `SECURE_HSTS_PRELOAD` being off (a
-  deliberate choice, not an oversight — see the comment in `prod.py`).
+- **`backend/Dockerfile`'s non-root `app` user couldn't import Django at all.** `useradd -d /app`
+  sets the user's home to `/app`, but pip's `--user` packages were being copied to
+  `/home/app/.local` — a path Python's user-site-packages lookup never checks, since it derives
+  the location from `$HOME`. Every container built from this Dockerfile (`web`, `worker`,
+  `beat`, in both `dev` and `prod`) crash-looped immediately on `ModuleNotFoundError: No module
+  named 'django'`. Fixed by copying to `/app/.local` instead, matching the user's real home.
+- **`collectstatic` failed with a `PermissionError`.** The `staticfiles` named volume mounts
+  onto `/app/staticfiles`, which didn't exist in the image; Docker initializes an empty named
+  volume's content from whatever's at its mount point in the image, and falls back to a fresh
+  *root-owned* directory when there's nothing there — unwritable by the non-root `app` user.
+  Fixed by creating that directory (with correct ownership) in the image before the volume ever
+  mounts onto it.
+- **Every request redirected in a loop.** With `SECURE_SSL_REDIRECT`'s default of `True` but no
+  TLS actually being terminated (the shared-host port workaround above), Django redirected
+  every request — including the Docker healthcheck's own internal one — to an HTTPS port
+  nothing was listening on. Not a code bug: `config.settings.prod` respects the env var
+  correctly, it's a config value that has to match how a given deployment actually terminates
+  TLS. Documented above and in `backend/.env.example`.
+
+None of these were guessable from a code read; each one only showed up in a container's actual
+logs (`docker compose ... logs web`) or an actual `curl` response. If something in this
+checklist still doesn't work for you, `docker compose ... logs <service>` is the first place to
+look, not a re-read of this file.

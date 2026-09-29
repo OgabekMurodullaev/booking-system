@@ -689,3 +689,24 @@ rather than faked: there is no tool in this environment that saves a browser scr
 committable file path, and a broken image link or a placeholder graphic would be worse than an
 honest note that they're not included yet — consistent with this log's standing rule of
 disclosing exactly what wasn't done rather than implying it was.
+
+## Post-deployment update
+
+The project has since been deployed for real, to a shared Hetzner VPS (two other sites already
+running behind their own nginx on ports 80/443). This is exactly the scenario Section 11's log
+flagged as unverified, and it surfaced three real bugs that no local check had caught — all
+three fixed and documented in `docs/DEPLOY.md` §5: the non-root Docker user couldn't actually
+import Django at all (a home-directory mismatch between where `useradd` put it and where pip's
+`--user` packages were copied — every container built from `backend/Dockerfile` had been
+silently broken since Section 1, never caught because the image was never run against a live
+daemon until this deploy), `collectstatic` failing with a `PermissionError` on a fresh named
+volume Docker initializes as root-owned, and a request-redirect loop from `SECURE_SSL_REDIRECT`
+defaulting to `True` in a deployment that isn't terminating TLS itself (a config mismatch, not a
+code bug). Also added, once the shared server made it necessary: `CADDY_HTTP_PORT`/
+`CADDY_HTTPS_PORT` env vars so the stack can bind to alternate host ports without touching
+anything the VPS's other two projects depend on — a real-world constraint no amount of local
+review would have surfaced, since it depends entirely on what else happens to be running on the
+target machine. This is the clearest instance in the whole project of the gap this log has
+tried to name honestly throughout: a local review, a passing test suite, and a careful reading
+of the Dockerfile all say "this should work" — only actually running it against a real host
+says whether it does.
