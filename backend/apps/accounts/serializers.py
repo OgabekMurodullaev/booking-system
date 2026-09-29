@@ -65,5 +65,15 @@ class EmailTokenObtainPairSerializer(TokenObtainPairSerializer):
         return data
 
 
+class LoginResponseSerializer(serializers.Serializer):
+    # TokenObtainPairSerializer.validate() injects access/refresh/user onto the
+    # response dict outside its own declared `fields`, so drf-spectacular's static
+    # introspection can't see them from EmailTokenObtainPairSerializer alone — this
+    # documents the actual runtime shape for schema/codegen accuracy (CLAUDE.md §7).
+    access = serializers.CharField()
+    refresh = serializers.CharField()
+    user = UserSerializer()
+
+
 class LogoutSerializer(serializers.Serializer):
     refresh = serializers.CharField()

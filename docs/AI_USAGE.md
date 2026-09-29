@@ -330,3 +330,62 @@ the spec's own wording literally ("a cancellation sends a METHOD:CANCEL with the
 than reading it as prose-only description of what a *real* calendar client would receive out of
 band — since this project has no separate calendar-sync service, the cancellation email is the
 only place that `METHOD:CANCEL` message can come from.
+
+## Section 8 — Frontend foundation: setup, auth, API client
+
+**What AI generated:** `frontend/` scaffolded via Vite (React 19 + TypeScript), then wired with
+Tailwind v4, shadcn/ui (`components.json`, "new-york" style), TanStack Query, React Router,
+react-hook-form + zod, date-fns/date-fns-tz, ESLint (flat config, typescript-eslint,
+react-hooks/react-refresh plugins) + Prettier — replacing the scaffold's default `oxlint` to match
+CLAUDE.md's explicit "ESLint + Prettier" stack choice. `src/index.css` carries `DESIGN.md`'s exact
+color/typography tokens as Tailwind v4 CSS variables (`:root`/`.dark`), mapped once via `@theme
+inline` so Tailwind utility classes (`bg-primary`, `text-accent-text`, etc.) resolve to them.
+`src/api/`: `client.ts` (a single `openapi-fetch` instance + middleware attaching
+`Authorization: Bearer <token>` per request and handling a 401 with a single-flight refresh —
+concurrent 401s all await one shared `Promise`, and the original request is cloned *before* it's
+sent so its one-shot body stream can be replayed after the token refreshes), `tokens.ts` (access
+token in a module-level variable, never persisted; refresh token in `localStorage`), `errors.ts`
+(`ApiError` + `unwrap()`, normalizing every non-2xx response into the backend's
+`{code, message, details}` envelope). `src/auth/`: `AuthContext` (boot-time silent refresh so a
+page reload doesn't look logged out, `login`/`logout`), `RequireRole` (a route-guard layout route:
+redirects to `/login` if unauthenticated, to the user's own role-home if authenticated but wrong
+role). Routes: `/login`, `/register` (both react-hook-form + zod, demo-account buttons on Login
+gated on `VITE_DEMO_*` env pairs), `/`, `/provider`, `/admin` (each behind `RequireRole`, sharing
+one `Layout` — header with user-menu dropdown and a timezone indicator). `frontend/Dockerfile`
+(multi-stage Node build → nginx with an SPA `try_files` fallback) + `nginx.conf`.
+`npm run gen:api` (`openapi-typescript` against the live dev backend) generates `src/api/
+schema.d.ts` — never hand-edited, per the section's own acceptance criterion.
+
+**What I changed / rejected:** Two real backend schema-accuracy gaps were found and fixed while
+building the typed client — not frontend workarounds, since CLAUDE.md requires the generated
+types to actually be correct: (1) `LoginView`'s documented response reused
+`EmailTokenObtainPairSerializer`'s *input* fields (`{email, password}`) because
+`TokenObtainPairSerializer.validate()` injects `access`/`refresh`/`user` onto the response dict at
+runtime, outside its declared `fields` — invisible to drf-spectacular's static introspection.
+Fixed with a `LoginResponseSerializer` + `@extend_schema_view(post=extend_schema(responses=...))`
+on `LoginView` (`apps/accounts/serializers.py`, `apps/accounts/views.py`). (2) Every serializer's
+read-only fields (e.g. `Register.id`/`.role`) showed up as *required* in the generated request
+body type, because request and response shared one undifferentiated schema — `tsc` correctly
+refused to compile a register call missing server-assigned fields it should never send. Fixed by
+turning on `COMPONENT_SPLIT_REQUEST` in `SPECTACULAR_SETTINGS` (`config/settings/base.py`), which
+made drf-spectacular emit proper `XRequest` variants project-wide (verified: full 196-test backend
+suite still green after both changes). Beyond that, no changes on review — the plan's other
+decisions (in-memory access token / localStorage refresh token, single-flight refresh, `sonner`
+for unexpected errors only, timezone indicator showing the signed-in user's own `timezone` rather
+than a separate business-timezone field that `/me/` doesn't expose) were accepted as-is.
+
+**Why:** Both schema fixes are the same category of bug as the frontend's own explicit `ApiError`
+design: trusting a serializer's declared `fields` to describe its *actual* runtime behavior is
+exactly the assumption that silently breaks the moment a view does something dynamic (injecting
+extra response keys, or accepting write-only fields disjoint from its read shape) — and Section
+8's own acceptance criterion ("no hand-written API response types") only means something if the
+generated types are actually trustworthy enough to build against without a manual override. Both
+were caught by `tsc` itself refusing to compile, not by inspection — the same "let the compiler
+find the gap" discipline this project's test suite has relied on since Section 2's concurrency
+tests. Every flow (register → login → role redirect → reload-persists-session → wrong-role
+redirect → logout, for all three roles) was verified against the real dev backend and real
+Postgres via the browser tool, not a mock; the 401-triggers-refresh-and-retry path was verified by
+code review rather than a live run, since forcing a real 401 needs either a 15-minute wait for the
+access token to expire or a temporary settings change neither of which seemed worth the time
+against a stress-tested, single-flight-guarded implementation — flagged here rather than silently
+assumed correct.

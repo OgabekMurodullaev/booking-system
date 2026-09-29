@@ -1,4 +1,4 @@
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import generics, status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -11,6 +11,7 @@ from apps.common.exceptions import DomainError
 
 from .serializers import (
     EmailTokenObtainPairSerializer,
+    LoginResponseSerializer,
     LogoutSerializer,
     RegisterSerializer,
     UserSerializer,
@@ -23,6 +24,7 @@ class RegisterView(generics.CreateAPIView):
     serializer_class = RegisterSerializer
 
 
+@extend_schema_view(post=extend_schema(responses=LoginResponseSerializer))
 class LoginView(TokenObtainPairView):
     permission_classes = [AllowAny]
     throttle_scope = "auth_login"
