@@ -279,3 +279,54 @@ none of those return values come from `_scoped_queryset`. All 4 concurrency test
 each (`pytest --count=20`, 80 total runs) with zero failures before considering the acceptance
 criterion met, and the full 188-test suite plus `ruff check`/`ruff format --check` were run clean
 before finishing.
+
+## Section 7 — Notifications (Celery, email, .ics)
+
+**What AI generated:** `apps/notifications/tasks.py`: four Celery tasks
+(`send_booking_confirmed`, `send_booking_cancelled`, `send_booking_pending_approval`,
+`send_booking_reminder`), each `@shared_task(bind=True, autoretry_for=(Exception,),
+retry_backoff=True, max_retries=5)`, sharing one `_send()` helper that renders a
+plain-text + HTML template pair, formats `booking.time_range` in the *recipient's own*
+`User.timezone` via `zoneinfo`, and sends through `EmailMultiAlternatives`; plus
+`scan_and_send_reminders_task`, a beat task (every 15 min, `CELERY_BEAT_SCHEDULE`) that finds
+confirmed bookings starting in the `[now+24h, now+24h+15min)` window with `reminder_sent_at`
+still null, atomically claims each one via a single `.filter(...).update(reminder_sent_at=now)`
+(rowcount tells you whether *you* won the claim) before enqueuing, so two overlapping scans can
+never double-send. `apps/notifications/ics.py`: `build_ics(booking, method)` using the new
+`icalendar` dependency — stable `UID` (`booking-{id}@bookingsystem`), `METHOD:REQUEST` or
+`METHOD:CANCEL`. Wired the four real bodies into the existing `apps/notifications/services.py`
+no-op stubs (`notify_hold_created`/`notify_booking_completed` stay no-ops — not in the spec's
+task list). New `Booking.reminder_sent_at` field + migration. New endpoint
+`GET /api/v1/bookings/{id}/calendar.ics` (`BookingCalendarView`), scoped through the same
+`_scoped_queryset()` every other booking endpoint uses, so only whoever can already see the
+booking can download its `.ics`. `EMAIL_BACKEND`/SMTP/`DEFAULT_FROM_EMAIL` settings added to
+`base.py` (console backend by default, env-overridable), `.env.example` updated to match. 8 new
+tests across `test_tasks.py` and `test_calendar_endpoint.py`: correct recipient per task
+(provider for pending-approval, customer for the rest), timezone-correct rendering (asserted by
+setting a non-UTC `User.timezone` and checking the rendered local time, not the raw UTC one), the
+`.ics` attachment round-trips through `icalendar.Calendar.from_ical()` with the right `UID`/
+`METHOD`, the reminder scan run twice only sends once, a booking outside the reminder window is
+left alone, a rolled-back transition leaves `mail.outbox` empty, and the calendar download 404s
+for a user who isn't the booking's customer/provider/admin.
+
+**What I changed / rejected:** No changes on review — the two flagged decisions (attaching a
+cancellation `.ics` in addition to the confirmation one; using `retry_backoff` on all four tasks
+rather than only the ones the spec called "idempotent") were accepted as-is. One test-design fix
+made during implementation, not a code bug: my first versions of the confirm/cancel/pending-
+approval tests used plain `@pytest.mark.django_db`, and all three failed with an empty
+`mail.outbox` — not because the email code was wrong, but because Django wraps a plain
+`django_db`-marked test in an atomic block that's rolled back (never committed) at teardown, so
+`transaction.on_commit()` callbacks registered during the test never fire at all. Switched those
+three tests to `@pytest.mark.django_db(transaction=True)`, matching the pattern the concurrency
+tests already established in Section 2/5/6 for the same reason.
+
+**Why:** The `on_commit`-vs-plain-`django_db` gotcha is exactly the kind of thing that would have
+silently produced "0 emails sent, test happens to pass because I forgot to assert on it" if
+caught less carefully — here it failed loudly instead, because the test asserted the outbox
+directly, which is the whole point of testing "notifications are only sent after commit" as its
+own acceptance criterion rather than assuming the `transaction.on_commit` wiring from Section 5
+"just works" under test. Attaching the cancellation `.ics` (not just the confirmation one) follows
+the spec's own wording literally ("a cancellation sends a METHOD:CANCEL with the same UID") rather
+than reading it as prose-only description of what a *real* calendar client would receive out of
+band — since this project has no separate calendar-sync service, the cancellation email is the
+only place that `METHOD:CANCEL` message can come from.

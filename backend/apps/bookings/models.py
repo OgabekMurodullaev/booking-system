@@ -30,6 +30,7 @@ class Booking(models.Model):
     submitted_at = models.DateTimeField(null=True, blank=True)
     is_late_cancellation = models.BooleanField(default=False)
     cancellation_reason = models.TextField(blank=True)
+    reminder_sent_at = models.DateTimeField(null=True, blank=True)
     idempotency_key = models.CharField(max_length=255, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

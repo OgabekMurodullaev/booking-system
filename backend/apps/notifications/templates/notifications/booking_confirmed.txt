@@ -1,0 +1,9 @@
+Hi {{ recipient_name }},
+
+Your booking is confirmed.
+
+Service: {{ service_name }}
+Provider: {{ provider_name }}
+When: {{ start_local }} - {{ end_local }} ({{ timezone_name }})
+
+A calendar invite is attached.

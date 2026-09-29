@@ -1,4 +1,5 @@
 from django.db.models import Exists, OuterRef
+from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema
@@ -9,6 +10,7 @@ from rest_framework.views import APIView
 
 from apps.catalog.models import Provider, Service
 from apps.common.exceptions import DomainError
+from apps.notifications.ics import build_ics
 from apps.scheduling.models import TimeOff
 
 from .filters import BookingFilterSet
@@ -176,3 +178,18 @@ class BookingCompleteView(APIView):
         booking = get_object_or_404(_scoped_queryset(request.user), pk=pk)
         booking = complete_booking(booking, actor=request.user)
         return Response(BookingDetailSerializer(booking).data)
+
+
+class BookingCalendarView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(request=None, responses={200: bytes})
+    def get(self, request, pk):
+        booking = get_object_or_404(
+            _scoped_queryset(request.user).select_related("provider__user", "service"), pk=pk
+        )
+        method = "CANCEL" if booking.status == Booking.Status.CANCELLED else "REQUEST"
+        ics_bytes = build_ics(booking, method=method)
+        response = HttpResponse(ics_bytes, content_type="text/calendar")
+        response["Content-Disposition"] = f'attachment; filename="booking-{booking.id}.ics"'
+        return response

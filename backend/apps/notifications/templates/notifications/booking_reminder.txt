@@ -1,0 +1,9 @@
+Hi {{ recipient_name }},
+
+This is a reminder about your upcoming booking.
+
+Service: {{ service_name }}
+Provider: {{ provider_name }}
+When: {{ start_local }} - {{ end_local }} ({{ timezone_name }})
+
+See you soon!
