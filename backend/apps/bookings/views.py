@@ -2,7 +2,7 @@ from django.db.models import Exists, OuterRef
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import generics, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -79,9 +79,24 @@ def _scoped_queryset(user):
         start__lt=OuterRef("time_range__endswith"),
         end__gt=OuterRef("time_range__startswith"),
     )
-    return queryset.annotate(has_time_off_conflict=Exists(conflicting_time_off))
+    return queryset.select_related("provider__business").annotate(
+        has_time_off_conflict=Exists(conflicting_time_off)
+    )
 
 
+@extend_schema_view(
+    # extend_schema_view must key by the dispatched HTTP handler name (`post`), not
+    # the DRF mixin action name (`create`) that `post()` delegates to — drf-spectacular
+    # reads the schema override off the actual method resolved per HTTP verb, so
+    # `create=extend_schema(...)` here is silently ignored (verified empirically: it
+    # produced no warning yet had no effect, while `post=` does).
+    post=extend_schema(
+        request=BookingCreateSerializer,
+        # 200 on an idempotency-key replay, 201 on a genuinely new hold — both return
+        # the full BookingDetailSerializer shape, not the create-input shape.
+        responses={200: BookingDetailSerializer, 201: BookingDetailSerializer},
+    )
+)
 class BookingListCreateView(generics.ListCreateAPIView):
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend]
@@ -101,7 +116,6 @@ class BookingListCreateView(generics.ListCreateAPIView):
             .order_by("time_range")
         )
 
-    @extend_schema(responses=BookingDetailSerializer)
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)

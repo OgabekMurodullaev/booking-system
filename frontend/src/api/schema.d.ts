@@ -386,16 +386,11 @@ export interface components {
             readonly cancellation_reason: string;
             /** @default false */
             readonly has_time_off_conflict: boolean;
+            readonly would_be_late_cancellation: boolean;
             /** Format: date-time */
             readonly created_at: string;
             /** Format: date-time */
             readonly updated_at: string;
-        };
-        BookingCreate: {
-            service: number;
-            provider?: number | null;
-            /** Format: date-time */
-            start: string;
         };
         BookingCreateRequest: {
             service: number;
@@ -424,6 +419,7 @@ export interface components {
             readonly cancellation_reason: string;
             /** @default false */
             readonly has_time_off_conflict: boolean;
+            readonly would_be_late_cancellation: boolean;
             /** Format: date-time */
             readonly created_at: string;
             /** Format: date-time */
@@ -941,12 +937,20 @@ export interface operations {
             };
         };
         responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookingDetail"];
+                };
+            };
             201: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["BookingCreate"];
+                    "application/json": components["schemas"]["BookingDetail"];
                 };
             };
         };

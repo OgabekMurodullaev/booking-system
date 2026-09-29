@@ -1,4 +1,4 @@
-import { Outlet } from 'react-router'
+import { Link, Outlet } from 'react-router'
 import { useAuth } from '@/auth/AuthContext'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
@@ -28,7 +28,27 @@ export function Layout() {
     <div className="min-h-screen bg-background">
       <header className="border-b border-border">
         <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4">
-          <span className="font-semibold">Booking System</span>
+          <div className="flex items-center gap-6">
+            <Link to="/" className="font-semibold">
+              Booking System
+            </Link>
+            {user?.role === 'customer' && (
+              <nav className="hidden items-center gap-4 text-sm sm:flex">
+                <Link
+                  to="/services"
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  Services
+                </Link>
+                <Link
+                  to="/bookings"
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  My Bookings
+                </Link>
+              </nav>
+            )}
+          </div>
 
           {user && (
             <div className="flex items-center gap-3">
@@ -59,6 +79,17 @@ export function Layout() {
                       </span>
                     </div>
                   </DropdownMenuLabel>
+                  {user.role === 'customer' && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem asChild className="sm:hidden">
+                        <Link to="/services">Services</Link>
+                      </DropdownMenuItem>
+                      <DropdownMenuItem asChild className="sm:hidden">
+                        <Link to="/bookings">My Bookings</Link>
+                      </DropdownMenuItem>
+                    </>
+                  )}
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onSelect={() => void logout()}>
                     Log out

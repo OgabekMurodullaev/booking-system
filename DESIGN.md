@@ -153,6 +153,7 @@ This exact block is the canonical source — copy it verbatim into `frontend/src
   --success-bg: #E6F2E8;
   --warning: #8A5A00;
   --warning-bg: #FBEEDA;
+  --destructive-bg: #FBEAE8;
   --accent-text: #A8431F; /* accent color when used AS TEXT, not as a fill */
 }
 
@@ -181,6 +182,7 @@ This exact block is the canonical source — copy it verbatim into `frontend/src
   --success-bg: #1F3324;
   --warning: #E0B44C;
   --warning-bg: #3A2E10;
+  --destructive-bg: #3D2220;
   --accent-text: #DD7A52; /* same value as --primary in dark mode — see the Named Rule above */
 }
 ```
