@@ -42,3 +42,4 @@ Thumbs.db
 
 # Claude Code local tooling
 .claude/
+.impeccable/config.local.json
