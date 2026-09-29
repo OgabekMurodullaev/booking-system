@@ -1,7 +1,8 @@
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, OperationalError, transaction
 
 from apps.accounts.models import User
 from apps.catalog.models import Business, Provider, Service
+from apps.common.db import is_deadlock
 from apps.common.exceptions import DomainError
 
 
@@ -34,7 +35,13 @@ def create_provider(
             provider = Provider.objects.create(user=user, business=business)
             if service_ids:
                 provider.services.set(Service.objects.filter(id__in=service_ids))
-    except IntegrityError as exc:
+    except (IntegrityError, OperationalError) as exc:
+        # See apps.accounts.services.registration.register_customer: a concurrent insert
+        # racing the same unique email can occasionally deadlock (SQLSTATE 40P01) instead
+        # of raising a clean IntegrityError — only swallow an OperationalError once that's
+        # confirmed, never any other operational failure.
+        if isinstance(exc, OperationalError) and not is_deadlock(exc):
+            raise
         raise DomainError(
             "A user with this email already exists.",
             code="validation_error",
