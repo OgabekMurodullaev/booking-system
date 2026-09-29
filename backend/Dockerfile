@@ -30,7 +30,12 @@ FROM base AS prod
 COPY --from=prod-builder /root/.local /app/.local
 ENV PATH=/app/.local/bin:$PATH
 COPY . .
-RUN chown -R app:app /app
+# STATIC_ROOT must exist (and be owned by app) before docker-compose.prod.yml's
+# staticfiles volume mounts here — an empty named volume takes the ownership of
+# whatever's already at its mount point in the image, and Docker otherwise creates a
+# fresh, root-owned empty directory there, which the non-root app user then can't
+# write collectstatic's output into.
+RUN mkdir -p /app/staticfiles && chown -R app:app /app
 USER app
 EXPOSE 8000
 CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "3"]
