@@ -85,8 +85,8 @@ services:
       dockerfile: deploy/Dockerfile.caddy
     restart: unless-stopped
     ports:
-      - "80:80"
-      - "443:443"
+      - "${CADDY_HTTP_PORT:-80}:80"
+      - "${CADDY_HTTPS_PORT:-443}:443"
     environment:
       DOMAIN: ${DOMAIN}
       ACME_CA: ${ACME_CA}
