@@ -521,3 +521,59 @@ dashboard was reading from and diffing the two outputs field-by-field, rather th
 "the chart looks about right" — they matched exactly. The full backend suite (200 tests) and a
 clean `typecheck`/`lint`/`build` were run once more after all three fixes, not just after the
 initial implementation pass.
+
+## Section 11 — Production deploy (Hetzner VPS), CI/CD
+
+**What AI generated:** Filled in `config/settings/prod.py`'s stub (left deliberately
+incomplete since Section 1, with a comment saying so): `SECURE_PROXY_SSL_HEADER`,
+`CSRF_TRUSTED_ORIGINS`, `SESSION_COOKIE_SECURE`/`CSRF_COOKIE_SECURE`, and HSTS settings
+starting at a conservative 1-week `max-age` rather than the commonly-cited 1-year figure,
+raised later once the real deployment is confirmed stable. A new `deploy/` directory: a
+Caddy-fronted `docker-compose.prod.yml` (db/redis unexposed, web/worker/beat sharing one
+`entrypoint.sh` that waits for Postgres then runs migrate/collectstatic before handing off to
+gunicorn or Celery, a Caddy image whose own multi-stage `Dockerfile.caddy` builds the React
+app so the production server itself never needs Node); a `Caddyfile` routing `/api/*` and
+`/admin/*` to Django, `/static/*` to a shared volume via `file_server`, and everything else to
+the SPA build with an `index.html` fallback for deep links; `backup.sh` (daily `pg_dump` |
+gzip, 7-day retention). `.github/workflows/ci.yml` (backend job with real Postgres/Redis
+service containers plus ruff/pytest; frontend job with typecheck/lint/build) and `deploy.yml`
+(SSH to the VPS, pull, rebuild, migrate, smoke-check `/api/v1/health/`). `docs/DEPLOY.md`: a
+server-hardening checklist plus a first-deploy walkthrough written as an exact
+command-then-expected-result checklist, an env var reference table, and instructions for
+switching `deploy.yml` from manual to automatic once a first real deploy succeeds.
+
+**What I changed / rejected:** Two adjustments made in direct response to your review, not
+generated-then-silently-accepted: (1) `deploy.yml` ships as `workflow_dispatch`
+(manual-trigger) only, with the eventual `workflow_run`-after-CI trigger left in as a
+commented block with instructions, rather than wiring automatic deploy-on-merge before a
+single real deploy has ever succeeded. (2) The Caddyfile's global options block sets
+`acme_ca {$ACME_CA:https://acme-v02.api.letsencrypt.org/directory}` — an env var with a
+production default — so the first real deploy attempts can point at Let's Encrypt's staging
+directory instead and avoid burning production rate limits while the stack is still being
+debugged against a real server. Also: the `entrypoint.sh` script is mounted into the
+containers at the compose level (`volumes:` + an `entrypoint:` override) rather than baked
+into `backend/Dockerfile`'s `prod` stage — the Dockerfile's existing `COPY` instructions
+assume a build context of `./backend`, and reaching a file that lives in a sibling `deploy/`
+directory from inside that stage would need a second, incompatible context root; mounting it
+in from the compose file (which itself lives in `deploy/`) avoids touching a Dockerfile that
+already works, for both the existing dev compose and this new prod one.
+
+**Why:** No real Hetzner VPS, domain, or GitHub Actions secrets exist yet for this project, so
+this section's honesty bar is different from every prior one: instead of claiming
+`docker compose -f deploy/docker-compose.prod.yml up --build` was verified, `docs/DEPLOY.md`
+says plainly what was and wasn't actually run — `docker compose ... config` succeeded (client-
+side YAML/interpolation validation, no daemon needed) and resolved all six services' build
+contexts, volumes, and env-merge order exactly as designed, but the daemon wasn't running in
+this dev environment (confirmed: `docker ps` can't reach it) so the actual image builds and
+container startup were never exercised; `entrypoint.sh`/`backup.sh` got `bash -n` (syntax
+only, no `shellcheck` available); the Caddyfile got a careful read against Caddy's documented
+syntax, no `caddy validate`. What *was* run for real: `python manage.py check --deploy`
+against `config.settings.prod` with dummy env vars came back clean except for two expected
+warnings (a deliberately weak dummy secret key, and `SECURE_HSTS_PRELOAD` being off by design,
+not by oversight); the full 200-test backend suite, `ruff check`/`format --check`, and a clean
+frontend `typecheck`/`lint`/`build` all still pass, confirming this section's changes don't
+regress anything that Sections 1-10 already proved. Disclosing exactly where verification
+stops (rather than a confident-sounding "tested end to end") is the same standard this log has
+applied to every partially-unverifiable claim since Section 8's token-refresh path — it's more
+useful to you to know precisely which of `docs/DEPLOY.md`'s 13 checklist steps are genuinely
+new ground than to discover it the hard way on the actual server.

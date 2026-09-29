@@ -1,0 +1,37 @@
+name: Deploy
+
+# Manual-trigger only for now, on purpose: this hasn't deployed to a real server yet, so it
+# stays a deliberate button-press until a first manual deploy (see docs/DEPLOY.md) succeeds.
+# Once that's confirmed, switch this to run automatically after CI passes on main by replacing
+# the block below with:
+#
+#   on:
+#     workflow_run:
+#       workflows: ["CI"]
+#       types: [completed]
+#       branches: [main]
+#
+# and adding `if: github.event.workflow_run.conclusion == 'success'` to the job.
+on:
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to VPS
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -e
+            cd /opt/booking-system
+            git pull origin main
+            docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env up -d --build
+            docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env exec -T web python manage.py migrate --noinput
+            sleep 5
+            curl -f https://${{ secrets.DEPLOY_DOMAIN }}/api/v1/health/
