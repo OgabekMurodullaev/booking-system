@@ -10,6 +10,7 @@ from psycopg.types.range import Range
 
 from apps.accounts.models import User
 from apps.catalog.models import Provider, Service
+from apps.common.db import is_deadlock
 from apps.common.exceptions import DomainError
 from apps.notifications.services import (
     notify_booking_cancelled,
@@ -255,16 +256,6 @@ def _constraint_name(exc: IntegrityError) -> str | None:
     return getattr(diag, "constraint_name", None) if diag else None
 
 
-def _is_deadlock(exc: OperationalError) -> bool:
-    # Exclusion constraints under heavy concurrent contention on the same range can
-    # occasionally deadlock (Postgres SQLSTATE 40P01) rather than raise a clean
-    # IntegrityError. The deadlock victim's transaction is rolled back automatically;
-    # treating it the same as a lost conflict (try the next candidate, or fail with
-    # slot_unavailable) is correct and avoids leaking a raw 500 to the client.
-    cause = exc.__cause__
-    return getattr(cause, "sqlstate", None) == "40P01"
-
-
 def _serialize_alternatives(slots: list[Slot]) -> list[dict]:
     return [
         {
@@ -377,7 +368,7 @@ def create_hold(
                 transaction.on_commit(lambda b=booking: notify_hold_created(b))
             return HoldResult(booking=booking, created=True)
         except (IntegrityError, OperationalError) as exc:
-            if isinstance(exc, OperationalError) and not _is_deadlock(exc):
+            if isinstance(exc, OperationalError) and not is_deadlock(exc):
                 raise
 
             constraint = _constraint_name(exc) if isinstance(exc, IntegrityError) else None
