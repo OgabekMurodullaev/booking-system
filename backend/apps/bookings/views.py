@@ -1,3 +1,4 @@
+from django.db.models import Exists, OuterRef
 from django.shortcuts import get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema
@@ -8,6 +9,7 @@ from rest_framework.views import APIView
 
 from apps.catalog.models import Provider, Service
 from apps.common.exceptions import DomainError
+from apps.scheduling.models import TimeOff
 
 from .filters import BookingFilterSet
 from .models import Booking
@@ -59,15 +61,23 @@ def _resolve_provider(provider_id, service: Service) -> Provider | None:
 
 def _scoped_queryset(user):
     if user.role == user.Role.CUSTOMER:
-        return Booking.objects.filter(customer=user)
-    if user.role == user.Role.PROVIDER:
+        queryset = Booking.objects.filter(customer=user)
+    elif user.role == user.Role.PROVIDER:
         provider = getattr(user, "provider_profile", None)
         if provider is None:
             return Booking.objects.none()
-        return Booking.objects.filter(provider=provider)
-    if user.role == user.Role.ADMIN:
-        return Booking.objects.filter(provider__business=user.business)
-    return Booking.objects.none()
+        queryset = Booking.objects.filter(provider=provider)
+    elif user.role == user.Role.ADMIN:
+        queryset = Booking.objects.filter(provider__business=user.business)
+    else:
+        return Booking.objects.none()
+
+    conflicting_time_off = TimeOff.objects.filter(
+        provider=OuterRef("provider"),
+        start__lt=OuterRef("time_range__endswith"),
+        end__gt=OuterRef("time_range__startswith"),
+    )
+    return queryset.annotate(has_time_off_conflict=Exists(conflicting_time_off))
 
 
 class BookingListCreateView(generics.ListCreateAPIView):

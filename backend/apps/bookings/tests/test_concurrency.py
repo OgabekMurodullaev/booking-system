@@ -8,6 +8,14 @@ from django.db import connections
 
 from apps.accounts.models import User
 from apps.bookings.models import Booking
+from apps.bookings.services.booking import (
+    STATE_MACHINE,
+    cancel_booking,
+    confirm_booking,
+    create_hold,
+    submit_booking,
+)
+from apps.common.exceptions import DomainError
 from apps.conftest import auth_client
 from apps.scheduling.models import WorkingHours
 
@@ -170,3 +178,69 @@ def test_same_idempotency_key_five_concurrent_requests_exactly_one_booking(
 
     assert sorted(results) == sorted([201] + [200] * 4)
     assert Booking.objects.filter(customer=customer).count() == 1
+
+
+@pytest.mark.django_db(transaction=True)
+@time_machine.travel(FROZEN_NOW)
+def test_concurrent_confirm_and_cancel_same_booking_is_consistent(
+    provider, service, working_hours, test_date, customer
+):
+    start = _local_dt(test_date, 10, 0)
+    booking = create_hold(
+        customer=customer, service=service, start=start, provider=provider
+    ).booking
+    booking = submit_booking(booking, actor=customer)
+
+    barrier = threading.Barrier(2)
+    results = {}
+
+    def do_confirm():
+        barrier.wait()
+        try:
+            updated = confirm_booking(booking, actor=provider.user)
+            results["confirm"] = updated.status
+        except DomainError as exc:
+            results["confirm"] = exc.code
+        finally:
+            connections.close_all()
+
+    def do_cancel():
+        barrier.wait()
+        try:
+            updated = cancel_booking(booking, actor=customer, reason="changed my mind")
+            results["cancel"] = updated.status
+        except DomainError as exc:
+            results["cancel"] = exc.code
+        finally:
+            connections.close_all()
+
+    threads = [threading.Thread(target=do_confirm), threading.Thread(target=do_cancel)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    # select_for_update() serializes the two calls rather than letting them race on a
+    # stale read, but it does NOT force exactly one of them to fail: if confirm wins
+    # first (pending -> confirmed), the cancel call re-reads the row, sees
+    # status=confirmed, and (confirmed -> cancelled) is itself a *valid* edge per the
+    # state machine (a customer may cancel an already-confirmed booking) -- so it
+    # legitimately succeeds too, as a valid follow-on transition, not a race bug. If
+    # cancel wins first instead, confirm's retry correctly gets invalid_transition
+    # (confirmed/cancelled has no (cancelled, confirmed) edge). Both outcomes are
+    # "consistent" in the sense the acceptance criterion means: no impossible
+    # transition is ever logged, and the persisted status always matches the log.
+    assert results["confirm"] in (Booking.Status.CONFIRMED, "invalid_transition")
+    assert results["cancel"] in (Booking.Status.CANCELLED, "invalid_transition")
+    assert not (
+        results["confirm"] == "invalid_transition" and results["cancel"] == "invalid_transition"
+    )
+
+    booking.refresh_from_db()
+    logs = list(booking.status_logs.order_by("created_at"))
+    assert [log.to_status for log in logs[:2]] == ["pending", "pending"]
+    transition_logs = logs[2:]
+    assert 1 <= len(transition_logs) <= 2
+    for log in transition_logs:
+        assert (log.from_status, log.to_status) in STATE_MACHINE
+    assert booking.status == transition_logs[-1].to_status

@@ -15,6 +15,7 @@ class BookingStatusLogSerializer(serializers.ModelSerializer):
 class BookingSerializer(serializers.ModelSerializer):
     start = serializers.SerializerMethodField()
     end = serializers.SerializerMethodField()
+    has_time_off_conflict = serializers.BooleanField(read_only=True, default=False)
 
     class Meta:
         model = Booking
@@ -32,6 +33,7 @@ class BookingSerializer(serializers.ModelSerializer):
             "submitted_at",
             "is_late_cancellation",
             "cancellation_reason",
+            "has_time_off_conflict",
             "created_at",
             "updated_at",
         ]
