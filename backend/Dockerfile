@@ -12,8 +12,8 @@ RUN pip install --no-cache-dir --user -r requirements/dev.txt
 
 # ---- dev: bind-mounted code, runserver, used by web/worker/beat in docker-compose ----
 FROM base AS dev
-COPY --from=builder /root/.local /home/app/.local
-ENV PATH=/home/app/.local/bin:$PATH
+COPY --from=builder /root/.local /app/.local
+ENV PATH=/app/.local/bin:$PATH
 COPY . .
 RUN chown -R app:app /app
 USER app
@@ -27,8 +27,8 @@ RUN pip install --no-cache-dir --user -r requirements/prod.txt
 
 # ---- prod: minimal image, no dev/test deps, code baked in, gunicorn ----
 FROM base AS prod
-COPY --from=prod-builder /root/.local /home/app/.local
-ENV PATH=/home/app/.local/bin:$PATH
+COPY --from=prod-builder /root/.local /app/.local
+ENV PATH=/app/.local/bin:$PATH
 COPY . .
 RUN chown -R app:app /app
 USER app
